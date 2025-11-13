@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h2>Season stats</h2>
+
+<h3>Per-player overview</h3>
+<div style="overflow-x:auto;">
+  <table border="1" cellpadding="4" cellspacing="0">
+    <thead>
+      <tr>
+        <th>Player</th>
+        <th>Tracks<br>owned</th>
+        <th>Locked</th>
+        <th>Total<br>wins</th>
+        <th>Wins as<br>owner</th>
+        <th>Wins as<br>challenger</th>
+        <th Sweeps>Sweeps</th>
+        <th>Tracks<br>taken</th>
+        <th>Tracks<br>lost</th>
+        <th>Net</th>
+        <th>Defense<br>succ / att</th>
+        <th>Defense<br>success %</th>
+        <th>At-risk<br>succ / att</th>
+        <th>At-risk<br>success %</th>
+        <th>Wins on<br>risk tracks</th>
+        <th>Steals from<br>risk</th>
+        <th>Hunter<br>marks</th>
+        <th>Wins as<br>hunter mark</th>
+        <th>Total time<br>holding (hrs)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in player_stats %}
+        <tr>
+          <td><strong>{{ s.name }}</strong></td>
+          <td style="text-align:right;">{{ s.tracks_owned }}</td>
+          <td style="text-align:right;">{{ s.locked_tracks }}</td>
+          <td style="text-align:right;">{{ s.wins }}</td>
+          <td style="text-align:right;">{{ s.wins_as_owner }}</td>
+          <td style="text-align:right;">{{ s.wins_as_non_owner }}</td>
+          <td style="text-align:right;">{{ s.sweeps }}</td>
+          <td style="text-align:right;">{{ s.tracks_taken }}</td>
+          <td style="text-align:right;">{{ s.tracks_lost }}</td>
+          <td style="text-align:right;">{{ s.net_tracks }}</td>
+          <td style="text-align:right;">
+            {{ s.defense_successes }} / {{ s.races_as_owner }}
+          </td>
+          <td style="text-align:right;">
+            {% if s.defense_success_rate is not none %}
+              {{ "%.1f"|format(s.defense_success_rate) }}%
+            {% else %}—{% endif %}
+          </td>
+          <td style="text-align:right;">
+            {{ s.defense_at_risk_successes }} / {{ s.defense_at_risk_attempts }}
+          </td>
+          <td style="text-align:right;">
+            {% if s.defense_at_risk_rate is not none %}
+              {{ "%.1f"|format(s.defense_at_risk_rate) }}%
+            {% else %}—{% endif %}
+          </td>
+          <td style="text-align:right;">{{ s.wins_on_risk }}</td>
+          <td style="text-align:right;">{{ s.steals_from_risk }}</td>
+          <td style="text-align:right;">{{ s.hunter_marks }}</td>
+          <td style="text-align:right;">{{ s.wins_with_hunter_mark }}</td>
+          <td style="text-align:right;">
+            {{ "%.1f"|format(s.total_seconds_held / 3600.0) }}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h3>Highlights</h3>
+<ul>
+  {% if most_defended %}
+    <li>
+      <strong>Most defended track:</strong>
+      {{ most_defended.track_en }} ({{ most_defended.track_es }}) —
+      {{ most_defended.cup_en }} ({{ most_defended.cup_es }})
+      — {{ most_defended.defenses }} successful defenses
+    </li>
+  {% endif %}
+  {% if most_contested %}
+    <li>
+      <strong>Most contested track:</strong>
+      {{ most_contested.track_en }} ({{ most_contested.track_es }}) —
+      {{ most_contested.cup_en }} ({{ most_contested.cup_es }})
+      — {{ most_contested.changes }} ownership changes
+    </li>
+  {% endif %}
+  {% if longest_held %}
+    <li>
+      <strong>Longest-held track:</strong>
+      {{ longest_held.track_en }} ({{ longest_held.track_es }}) —
+      {{ longest_held.cup_en }} ({{ longest_held.cup_es }})
+      held by {{ longest_held.owner_name }}
+      for about {{ "%.1f"|format(longest_held.seconds / 3600.0) }} hours
+    </li>
+  {% endif %}
+</ul>
+
+<h3>Most active tracks (by races)</h3>
+{% if track_activity %}
+  <table border="1" cellpadding="4" cellspacing="0">
+    <thead>
+      <tr>
+        <th>Track</th>
+        <th>Cup</th>
+        <th>Races</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in track_activity %}
+        <tr>
+          <td>{{ t.track_en }} ({{ t.track_es }})</td>
+          <td>{{ t.cup_en }} ({{ t.cup_es }})</td>
+          <td style="text-align:right;">{{ t.races }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No races recorded yet this season.</p>
+{% endif %}
+
+{% endblock %}

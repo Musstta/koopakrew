@@ -3,6 +3,7 @@ import json
 import sqlite3
 import csv
 import io
+from collections import defaultdict
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from flask import Flask, g, render_template, request, redirect, url_for, abort, flash, make_response
@@ -322,17 +323,24 @@ def undo_last_event(db):
         except Exception as e:
             print(f"Undo side effects failed: {e}")
 
-    # Restore main track pre-state if this is a normal race (ignore sweeps)
-    if not ev["is_sweep"]:
-        db.execute(
-            "UPDATE tracks SET owner_id = ?, state = COALESCE(?, 0), threatened_by_id = ? WHERE id = ?",
-            (ev["pre_owner_id"], ev["pre_state"], ev["pre_threatened_by_id"], ev["track_id"]),
-        )
+    # If this was a sweep event, remove it and also undo the race that caused it.
+    if ev["is_sweep"]:
+        db.execute("DELETE FROM events WHERE id = ?", (ev["id"],))
+        db.commit()
+        # Recursively undo the previous event (the race that created the sweep)
+        return undo_last_event(db)
+
+    # Otherwise, restore main track pre-state for a normal race
+    db.execute(
+        "UPDATE tracks SET owner_id = ?, state = COALESCE(?, 0), threatened_by_id = ? WHERE id = ?",
+        (ev["pre_owner_id"], ev["pre_state"], ev["pre_threatened_by_id"], ev["track_id"]),
+    )
 
     # Delete the event
     db.execute("DELETE FROM events WHERE id = ?", (ev["id"],))
     db.commit()
     return True
+
 
 
 # --- Helpers for labels & filtered totals -----------------------------------
@@ -716,6 +724,334 @@ def export_standings():
     suffix = ("_" + "_".join(fbits)) if fbits else ""
     filename = f"standings_{label_safe}{suffix}.csv"
     return csv_response(filename, header, out)
+
+@app.route("/stats")
+def stats_page():
+    db = get_db()
+    season_row = get_season_row(db, request.args.get("season", type=int))
+    if not season_row:
+        abort(500, "No season configured.")
+    season_id = season_row["id"]
+    season_label = season_row["label"]
+    season_start = date.fromisoformat(season_row["start_date"])
+    season_start_dt = datetime.combine(
+        season_start,
+        datetime.min.time(),
+        tzinfo=ZoneInfo(LOCAL_TZ),
+    )
+    now_dt = datetime.now(ZoneInfo(LOCAL_TZ))
+
+    # Helper factory for per-player stats dicts
+    def make_empty_player_stats(name: str):
+        return {
+            "name": name,
+            "tracks_owned": 0,
+            "locked_tracks": 0,
+            "wins": 0,
+            "wins_as_owner": 0,
+            "wins_as_non_owner": 0,
+            "sweeps": 0,
+            "tracks_taken": 0,
+            "tracks_lost": 0,
+            "net_tracks": 0,
+            "races_as_owner": 0,
+            "defense_successes": 0,
+            "defense_success_rate": None,
+            "defense_at_risk_attempts": 0,
+            "defense_at_risk_successes": 0,
+            "defense_at_risk_rate": None,
+            "wins_on_risk": 0,
+            "steals_from_risk": 0,
+            "hunter_marks": 0,
+            "wins_with_hunter_mark": 0,
+            "races_played": 0,
+            "total_seconds_held": 0.0,
+        }
+
+    # Players
+    player_rows = db.execute(
+        "SELECT id, name FROM players WHERE active = 1 ORDER BY name"
+    ).fetchall()
+    player_names = {r["id"]: r["name"] for r in player_rows}
+    stats = {pid: make_empty_player_stats(name) for pid, name in player_names.items()}
+
+    def ensure_player(pid):
+        if pid is None:
+            return None
+        if pid not in stats:
+            stats[pid] = make_empty_player_stats(player_names.get(pid, f"Player {pid}"))
+        return stats[pid]
+
+    # Track metadata for this season
+    track_rows = db.execute(
+        """
+        SELECT t.id, t.en AS track_en, t.es AS track_es,
+               c.en AS cup_en, c.es AS cup_es,
+               t.owner_id AS final_owner_id,
+               t.state AS final_state
+        FROM tracks t
+        JOIN cups c ON c.id = t.cup_id
+        WHERE t.season = ?
+        """,
+        (season_id,),
+    ).fetchall()
+
+    track_info = {}
+    track_final_owner = {}
+    for r in track_rows:
+        track_info[r["id"]] = {
+            "track_en": r["track_en"],
+            "track_es": r["track_es"],
+            "cup_en": r["cup_en"],
+            "cup_es": r["cup_es"],
+        }
+        track_final_owner[r["id"]] = r["final_owner_id"]
+
+        # Use final state/owner for current tracks_owned/locked_tracks
+        owner_id = r["final_owner_id"]
+        state = r["final_state"]
+        if owner_id is not None:
+            ps = ensure_player(owner_id)
+            ps["tracks_owned"] += 1
+            if state == 1:
+                ps["locked_tracks"] += 1
+
+    # Per-track stats holders
+    track_race_count = defaultdict(int)
+    track_ownership_changes = defaultdict(int)
+    track_defenses = defaultdict(int)  # per-track total defenses
+
+    # Player-track hold durations
+    hold_durations = defaultdict(float)  # (player_id, track_id) -> seconds
+    track_current_owner = {}
+    track_current_since = {}
+    tracks_with_events = set()
+
+    # Sweeps per player
+    sweep_rows = db.execute(
+        """
+        SELECT e.sweep_owner_id
+        FROM events e
+        JOIN tracks t ON t.id = e.track_id
+        WHERE t.season = ? AND e.is_sweep = 1
+        """,
+        (season_id,),
+    ).fetchall()
+    for r in sweep_rows:
+        sweeper_id = r["sweep_owner_id"]
+        ps = ensure_player(sweeper_id)
+        if ps:
+            ps["sweeps"] += 1
+
+    # Normal race events, ordered per track for timeline purposes
+    event_rows = db.execute(
+        """
+        SELECT e.*, t.id AS track_id
+        FROM events e
+        JOIN tracks t ON t.id = e.track_id
+        WHERE t.season = ? AND e.is_sweep = 0
+        ORDER BY t.id ASC, e.occurred_at ASC, e.id ASC
+        """,
+        (season_id,),
+    ).fetchall()
+
+    for e in event_rows:
+        track_id = e["track_id"]
+        winner_id = e["winner_id"]
+        pre_owner_id = e["pre_owner_id"]
+        post_owner_id = e["post_owner_id"]
+        pre_state = e["pre_state"]
+        post_state = e["post_state"]
+        pre_threat = e["pre_threatened_by_id"]
+
+        occurred_at = datetime.fromisoformat(e["occurred_at"])
+
+        tracks_with_events.add(track_id)
+        track_race_count[track_id] += 1
+
+        # Init timeline for this track on first event
+        if track_id not in track_current_owner:
+            track_current_owner[track_id] = pre_owner_id
+            track_current_since[track_id] = season_start_dt
+
+        # Duration for current owner up to this event
+        cur_owner = track_current_owner[track_id]
+        cur_since = track_current_since[track_id]
+        if cur_owner is not None:
+            hold_durations[(cur_owner, track_id)] += (occurred_at - cur_since).total_seconds()
+
+        # Update current owner to post-owner for next segment
+        track_current_owner[track_id] = post_owner_id
+        track_current_since[track_id] = occurred_at
+
+        # Player-level stats
+        winner_stats = ensure_player(winner_id)
+        pre_owner_stats = ensure_player(pre_owner_id)
+        post_owner_stats = ensure_player(post_owner_id)
+
+        if winner_stats:
+            winner_stats["wins"] += 1
+            winner_stats["races_played"] += 1
+            if pre_owner_id == winner_id:
+                winner_stats["wins_as_owner"] += 1
+            else:
+                winner_stats["wins_as_non_owner"] += 1
+
+        if pre_owner_stats:
+            pre_owner_stats["races_played"] += 1
+            pre_owner_stats["races_as_owner"] += 1
+
+        # Ownership changes
+        if pre_owner_id and post_owner_id and pre_owner_id != post_owner_id:
+            track_ownership_changes[track_id] += 1
+            if pre_owner_stats:
+                pre_owner_stats["tracks_lost"] += 1
+            if post_owner_stats:
+                post_owner_stats["tracks_taken"] += 1
+
+        # General defense (owner keeps the track, regardless of risk)
+        if pre_owner_id:
+            if winner_id == pre_owner_id and post_owner_id == pre_owner_id:
+                pre_owner_stats["defense_successes"] += 1
+                track_defenses[track_id] += 1
+
+        # Defense attempts on at-risk tracks
+        if pre_owner_id and pre_state == -1:
+            pre_owner_stats["defense_at_risk_attempts"] += 1
+            if winner_id == pre_owner_id and post_owner_id == pre_owner_id:
+                pre_owner_stats["defense_at_risk_successes"] += 1
+
+        # Wins on at-risk tracks (any player)
+        if winner_id and pre_state == -1:
+            winner_stats["wins_on_risk"] += 1
+            if pre_owner_id and winner_id != pre_owner_id:
+                winner_stats["steals_from_risk"] += 1
+
+        # Hunter marks: winner puts someone else's track at risk from default
+        if (
+            winner_id
+            and pre_state == 0
+            and pre_owner_id
+            and winner_id != pre_owner_id
+            and post_state == -1
+        ):
+            winner_stats["hunter_marks"] += 1
+
+        # Wins when you are also the hunter mark
+        if winner_id and pre_state == -1 and pre_threat == winner_id:
+            winner_stats["wins_with_hunter_mark"] += 1
+
+    # Close open ownership intervals for tracks with events
+    for track_id, cur_owner in track_current_owner.items():
+        cur_since = track_current_since[track_id]
+        if cur_owner is not None:
+            hold_durations[(cur_owner, track_id)] += (now_dt - cur_since).total_seconds()
+
+    # Tracks with no events: final owner holds from season start to now
+    for track_id, info in track_info.items():
+        if track_id in tracks_with_events:
+            continue
+        owner_id = track_final_owner.get(track_id)
+        if owner_id:
+            hold_durations[(owner_id, track_id)] += (now_dt - season_start_dt).total_seconds()
+
+    # Apply total held time to per-player stats
+    for (pid, tid), seconds in hold_durations.items():
+        ps = ensure_player(pid)
+        if ps:
+            ps["total_seconds_held"] += seconds
+
+    # Derived fields per player
+    for ps in stats.values():
+        ps["net_tracks"] = ps["tracks_taken"] - ps["tracks_lost"]
+
+        attempts = ps["races_as_owner"]
+        if attempts > 0:
+            ps["defense_success_rate"] = (ps["defense_successes"] / attempts) * 100.0
+        else:
+            ps["defense_success_rate"] = None
+
+        risk_attempts = ps["defense_at_risk_attempts"]
+        if risk_attempts > 0:
+            ps["defense_at_risk_rate"] = (ps["defense_at_risk_successes"] / risk_attempts) * 100.0
+        else:
+            ps["defense_at_risk_rate"] = None
+
+    # Player stats sorted by wins and tracks
+    player_stats = sorted(
+        stats.values(),
+        key=lambda s: (-s["wins"], -s["tracks_owned"], s["name"].lower()),
+    )
+
+    # Track highlights
+
+    # Most active tracks (by races)
+    track_activity = []
+    for tid, count in track_race_count.items():
+        info = track_info.get(tid)
+        if not info:
+            continue
+        track_activity.append({
+            "track_en": info["track_en"],
+            "track_es": info["track_es"],
+            "cup_en": info["cup_en"],
+            "cup_es": info["cup_es"],
+            "races": count,
+        })
+    track_activity.sort(key=lambda x: (-x["races"], x["track_en"]))
+    track_activity = track_activity[:10]
+
+    # Most defended track (by total defenses for any player)
+    most_defended = None
+    if track_defenses:
+        tid = max(track_defenses, key=lambda t: track_defenses[t])
+        info = track_info.get(tid)
+        most_defended = {
+            "track_en": info["track_en"],
+            "track_es": info["track_es"],
+            "cup_en": info["cup_en"],
+            "cup_es": info["cup_es"],
+            "defenses": track_defenses[tid],
+        }
+
+    # Track with most ownership changes
+    most_contested = None
+    if track_ownership_changes:
+        tid = max(track_ownership_changes, key=lambda t: track_ownership_changes[t])
+        info = track_info.get(tid)
+        most_contested = {
+            "track_en": info["track_en"],
+            "track_es": info["track_es"],
+            "cup_en": info["cup_en"],
+            "cup_es": info["cup_es"],
+            "changes": track_ownership_changes[tid],
+        }
+
+    # Track held the longest by any single player (total time)
+    longest_held = None
+    if hold_durations:
+        # Find (player, track) pair with max hold seconds
+        (pid, tid), seconds = max(hold_durations.items(), key=lambda kv: kv[1])
+        info = track_info.get(tid)
+        owner_name = player_names.get(pid, f"Player {pid}")
+        longest_held = {
+            "track_en": info["track_en"],
+            "track_es": info["track_es"],
+            "cup_en": info["cup_en"],
+            "cup_es": info["cup_es"],
+            "owner_name": owner_name,
+            "seconds": seconds,
+        }
+
+    return render_template(
+        "stats.html",
+        season_label=season_label,
+        player_stats=player_stats,
+        track_activity=track_activity,
+        most_defended=most_defended,
+        most_contested=most_contested,
+        longest_held=longest_held,
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

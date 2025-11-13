@@ -28,6 +28,7 @@
     <nav>
       <a class="btn" href="{{ url_for('index') }}">Standings</a>
       <a class="btn" href="{{ url_for('events_log') }}">Events</a>
+      <a class="btn" href="{{ url_for('stats_page') }}">Stats</a>
       <form class="inline" action="{{ url_for('undo') }}" method="post">
         <button class="btn" type="submit">Undo last change</button>
       </form>
