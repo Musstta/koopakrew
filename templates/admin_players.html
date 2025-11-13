@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h2>Player management</h2>
+
+<div class="totals" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+  <div>Active: {{ counts.active }} · Inactive: {{ counts.inactive }}</div>
+  <form method="get" style="display:flex;gap:8px;align-items:center;">
+    <label style="display:flex;flex-direction:column;gap:4px;">View
+      <select name="show">
+        <option value="active" {% if show_mode != "all" %}selected{% endif %}>Active only</option>
+        <option value="all" {% if show_mode == "all" %}selected{% endif %}>All players</option>
+      </select>
+    </label>
+    <button class="btn" type="submit">Apply</button>
+  </form>
+</div>
+
+{% if default_player %}
+  <div class="totals" style="background:#e3f2fd;">
+    Default player: <strong>{{ default_player.name }}</strong>
+    <form method="post" action="{{ url_for('clear_default_player') }}" class="inline" style="margin-left:12px;">
+      <input type="hidden" name="show_mode" value="{{ show_mode }}">
+      <button class="btn" type="submit">Clear default</button>
+    </form>
+  </div>
+{% endif %}
+
+<h3>Add a player</h3>
+<form method="post" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+  <input type="hidden" name="action" value="add">
+  <input type="hidden" name="show_mode" value="{{ show_mode }}">
+  <label style="display:flex;flex-direction:column;">
+    Name
+    <input class="player-name-input" type="text" name="name" placeholder="New player name" required>
+  </label>
+  <button class="btn" type="submit">Add</button>
+</form>
+
+<h3>Existing players</h3>
+<div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Default</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in players %}
+        <tr>
+          <td>
+            <form method="post" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <input type="hidden" name="action" value="rename">
+              <input type="hidden" name="player_id" value="{{ p.id }}">
+              <input type="hidden" name="show_mode" value="{{ show_mode }}">
+              <input class="player-name-input" type="text" name="name" value="{{ p.name }}" required>
+              <button class="btn" type="submit">Save</button>
+            </form>
+          </td>
+          <td style="text-align:center;">
+            {% if p.active %}
+              <span style="color:#2e7d32;font-weight:600;">Active</span>
+            {% else %}
+              <span style="color:#c62828;font-weight:600;">Inactive</span>
+            {% endif %}
+          </td>
+          <td style="text-align:center;">
+            {% if p.active %}
+              <form method="post" action="{{ url_for('set_default_player') }}" style="display:inline;">
+                <input type="hidden" name="player_id" value="{{ p.id }}">
+                <input type="hidden" name="show_mode" value="{{ show_mode }}">
+                <button class="btn" type="submit">
+                  {% if default_player and default_player.id == p.id %}
+                    ✅ Default
+                  {% else %}
+                    Set default
+                  {% endif %}
+                </button>
+              </form>
+            {% else %}
+              <span class="event-detail">Activate to set</span>
+            {% endif %}
+          </td>
+          <td style="text-align:center;">
+            <form method="post" style="display:inline;">
+              <input type="hidden" name="action" value="toggle">
+              <input type="hidden" name="player_id" value="{{ p.id }}">
+              <input type="hidden" name="show_mode" value="{{ show_mode }}">
+              <button class="btn" type="submit"
+                {% if p.active %}
+                  onclick="return confirm('Deactivate {{ p.name }}? They will disappear from standings until reactivated.');"
+                {% endif %}>
+                {% if p.active %}Deactivate{% else %}Activate{% endif %}
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

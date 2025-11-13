@@ -4,72 +4,75 @@
 <h2>Season stats</h2>
 
 <h3>Per-player overview</h3>
-<div style="overflow-x:auto;">
-  <table border="1" cellpadding="4" cellspacing="0">
+<form method="get" class="filter-form" style="max-width:360px;margin-bottom:12px;">
+  <label>
+    Sort players by
+    <select name="sort">
+      {% for option in metric_sort_options %}
+        <option value="{{ option.id }}" {% if option.id == selected_sort %}selected{% endif %}>
+          {{ option.label }}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if selected_track %}
+    <input type="hidden" name="track_id" value="{{ selected_track.id }}">
+  {% endif %}
+  <button class="btn" type="submit">Update</button>
+</form>
+
+<div class="table-scroll">
+  <table class="stats-table">
     <thead>
       <tr>
-        <th>Player</th>
-        <th>Tracks<br>owned</th>
-        <th>Locked</th>
-        <th>Total<br>wins</th>
-        <th>Wins as<br>owner</th>
-        <th>Wins as<br>challenger</th>
-        <th Sweeps>Sweeps</th>
-        <th>Tracks<br>taken</th>
-        <th>Tracks<br>lost</th>
-        <th>Net</th>
-        <th>Defense<br>succ / att</th>
-        <th>Defense<br>success %</th>
-        <th>At-risk<br>succ / att</th>
-        <th>At-risk<br>success %</th>
-        <th>Wins on<br>risk tracks</th>
-        <th>Steals from<br>risk</th>
-        <th>Hunter<br>marks</th>
-        <th>Wins as<br>hunter mark</th>
-        <th>Total time<br>holding (hrs)</th>
+        <th>Metric</th>
+        {% for p in player_stats %}
+          <th>{{ p.name }}</th>
+        {% endfor %}
       </tr>
     </thead>
     <tbody>
-      {% for s in player_stats %}
-        <tr>
-          <td><strong>{{ s.name }}</strong></td>
-          <td style="text-align:right;">{{ s.tracks_owned }}</td>
-          <td style="text-align:right;">{{ s.locked_tracks }}</td>
-          <td style="text-align:right;">{{ s.wins }}</td>
-          <td style="text-align:right;">{{ s.wins_as_owner }}</td>
-          <td style="text-align:right;">{{ s.wins_as_non_owner }}</td>
-          <td style="text-align:right;">{{ s.sweeps }}</td>
-          <td style="text-align:right;">{{ s.tracks_taken }}</td>
-          <td style="text-align:right;">{{ s.tracks_lost }}</td>
-          <td style="text-align:right;">{{ s.net_tracks }}</td>
-          <td style="text-align:right;">
-            {{ s.defense_successes }} / {{ s.races_as_owner }}
+      {% for metric in metric_rows %}
+        <tr class="metric-group-{{ metric.group }}">
+          <td class="metric-name">
+            {{ metric.label }}
+            {% if metric.help %}
+              <span class="info-tip" title="{{ metric.help }}"></span>
+            {% endif %}
           </td>
-          <td style="text-align:right;">
-            {% if s.defense_success_rate is not none %}
-              {{ "%.1f"|format(s.defense_success_rate) }}%
-            {% else %}—{% endif %}
-          </td>
-          <td style="text-align:right;">
-            {{ s.defense_at_risk_successes }} / {{ s.defense_at_risk_attempts }}
-          </td>
-          <td style="text-align:right;">
-            {% if s.defense_at_risk_rate is not none %}
-              {{ "%.1f"|format(s.defense_at_risk_rate) }}%
-            {% else %}—{% endif %}
-          </td>
-          <td style="text-align:right;">{{ s.wins_on_risk }}</td>
-          <td style="text-align:right;">{{ s.steals_from_risk }}</td>
-          <td style="text-align:right;">{{ s.hunter_marks }}</td>
-          <td style="text-align:right;">{{ s.wins_with_hunter_mark }}</td>
-          <td style="text-align:right;">
-            {{ "%.1f"|format(s.total_seconds_held / 3600.0) }}
-          </td>
+          {% for cell in metric.cells %}
+            {% set highlight = metric.max_highlight is not none and cell.highlight == metric.max_highlight %}
+            <td class="{% if highlight %}top-value{% endif %}" style="text-align:right;">
+              {% if metric.type == "value" %}
+                {{ cell.value }}
+              {% elif metric.type == "pair" %}
+                {{ cell.num }} / {{ cell.den }}
+              {% elif metric.type == "percent" %}
+                {% if cell.percent is not none %}
+                  {{ "%.1f"|format(cell.percent) }}%
+                {% else %}
+                  —
+                {% endif %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          {% endfor %}
         </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+
+<div class="stats-legend">
+  <span class="legend-pill control">Track control</span>
+  <span class="legend-pill performance">Race performance</span>
+  <span class="legend-pill risk">Risk / hunter plays</span>
+  <span class="legend-pill defense">Defense</span>
+</div>
+<p class="event-detail">
+  Risk rows track who is pushing tracks into ⚠️ status. Hunter marks show how often someone sets a target and later steals it.
+</p>
 
 <h3>Highlights</h3>
 <ul>
@@ -87,15 +90,6 @@
       {{ most_contested.track_en }} ({{ most_contested.track_es }}) —
       {{ most_contested.cup_en }} ({{ most_contested.cup_es }})
       — {{ most_contested.changes }} ownership changes
-    </li>
-  {% endif %}
-  {% if longest_held %}
-    <li>
-      <strong>Longest-held track:</strong>
-      {{ longest_held.track_en }} ({{ longest_held.track_es }}) —
-      {{ longest_held.cup_en }} ({{ longest_held.cup_es }})
-      held by {{ longest_held.owner_name }}
-      for about {{ "%.1f"|format(longest_held.seconds / 3600.0) }} hours
     </li>
   {% endif %}
 </ul>
@@ -122,6 +116,72 @@
   </table>
 {% else %}
   <p>No races recorded yet this season.</p>
+{% endif %}
+
+<h3>Track insights</h3>
+
+<form method="get" action="{{ url_for('stats_page') }}" style="margin-bottom:8px;">
+  <label for="track_id">Choose a track:</label>
+  <select name="track_id" id="track_id">
+    {% for t in track_selector %}
+      <option value="{{ t.id }}"
+        {% if selected_track and selected_track.id == t.id %}selected{% endif %}>
+        {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
+      </option>
+    {% endfor %}
+  </select>
+  <button class="btn" type="submit">View</button>
+</form>
+
+{% if selected_track %}
+  <h4>
+    {{ selected_track.en }} ({{ selected_track.es }}) —
+    {{ selected_track.cup_en }} ({{ selected_track.cup_es }})
+  </h4>
+
+  <h5>Per-player on this track</h5>
+  {% if track_player_stats %}
+    <table border="1" cellpadding="4" cellspacing="0">
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th>Wins</th>
+          <th>Defenses</th>
+          <th>Times taken</th>
+          <th>Times lost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in track_player_stats %}
+          <tr>
+            <td><strong>{{ s.name }}</strong></td>
+            <td style="text-align:right;">{{ s.wins }}</td>
+            <td style="text-align:right;">{{ s.defenses }}</td>
+            <td style="text-align:right;">{{ s.takes }}</td>
+            <td style="text-align:right;">{{ s.losses }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No races have been recorded on this track yet.</p>
+  {% endif %}
+
+  <h5>Event history</h5>
+  {% if track_events %}
+    <ul>
+      {% for e in track_events %}
+        <li>
+          {{ e.occurred_at }} —
+          {{ e.winner_name or "—" }} won.
+          Before: {{ e.pre_owner_name or "—" }} →
+          After: {{ e.post_owner_name or "—" }}.
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No events yet for this track.</p>
+  {% endif %}
 {% endif %}
 
 {% endblock %}

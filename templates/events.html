@@ -3,18 +3,88 @@
 
 <h2>Event Log</h2>
 
-<p style="margin-bottom:8px;">
-  <a class="btn" href="{{ url_for('export_events') }}">Download CSV</a>
-  <a class="btn" href="{{ url_for('index') }}">Back to standings</a>
+{% set season_param = request.args.get('season') %}
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+  <a class="btn" href="{{ url_for('index', season=season_param) }}">Back to standings</a>
+  <div style="font-size:0.85em;color:#555;text-align:right;">
+    Debug export:
+    <a href="{{ url_for('export_events', season=season_param) }}">Events CSV</a>
+  </div>
+</div>
+
+<form method="get" action="{{ url_for('events_log') }}" class="filter-form" style="margin-bottom:12px;">
+  {% if season_param %}
+    <input type="hidden" name="season" value="{{ season_param }}">
+  {% endif %}
+  <label>
+    Player
+    <select name="player">
+      <option value="">All players</option>
+      {% for p in players %}
+        <option value="{{ p.id }}" {% if selected_filters.player == p.id %}selected{% endif %}>
+          {{ p.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    Cup
+    <select name="cup">
+      <option value="">All cups</option>
+      {% for cup in cups %}
+        <option value="{{ cup.id }}" {% if selected_filters.cup == cup.id %}selected{% endif %}>
+          {{ cup.en }} ({{ cup.es }})
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    Track
+    <select name="track">
+      <option value="">All tracks</option>
+      {% for t in tracks %}
+        <option value="{{ t.id }}" {% if selected_filters.track == t.id %}selected{% endif %}>
+          {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    Event type
+    <select name="event_type">
+      <option value="all" {% if selected_filters.event_type == "all" %}selected{% endif %}>All events</option>
+      <option value="race" {% if selected_filters.event_type == "race" %}selected{% endif %}>Races only</option>
+      <option value="sweep" {% if selected_filters.event_type == "sweep" %}selected{% endif %}>Sweeps only</option>
+    </select>
+  </label>
+  <div class="filter-actions">
+    <button class="btn" type="submit">Apply filters</button>
+    <a class="btn" href="{{ url_for('events_log', season=season_param) }}">Reset</a>
+    {% if default_player %}
+      <a class="btn" href="{{ url_for('events_log',
+        season=season_param,
+        player=default_player.id,
+        cup=selected_filters.cup,
+        track=selected_filters.track,
+        event_type=selected_filters.event_type,
+        me=1) }}">
+        Involves {{ default_player.name }}
+      </a>
+    {% endif %}
+  </div>
+</form>
+
+<p style="font-size:0.9em;color:#555;margin-top:-4px;">
+  Showing {{ events|length }} event{{ events|length != 1 and 's' or '' }} for {{ season_label }}.
 </p>
 
 {% if not events %}
   <p>No events yet for this season.</p>
 {% else %}
-  <ul style="list-style:none;padding:0;margin:0;">
+  <div>
     {% for e in events %}
-      <li style="border:1px solid #ddd;border-radius:8px;padding:8px 10px;margin-bottom:8px;">
-        <div style="font-size:0.9em;color:#555;">
+      <div class="event-card">
+        <div class="event-header">
           {{ e.occurred_at }}
           {% if e.is_sweep %}
             • <span style="color:#c62828;font-weight:600;">SWEEP</span>
@@ -35,20 +105,20 @@
           <div>
             Winner: <strong>{{ e.winner }}</strong>
           </div>
-          <div style="font-size:0.9em;color:#555;">
+          <div class="event-detail">
             Before: {{ e.pre_owner or "—" }}
             {% if e.pre_state == 1 %}(Locked){% elif e.pre_state == -1 %}(At risk){% elif e.pre_state == 0 %}(Default){% endif %}
             {% if e.pre_mark %} — mark: {{ e.pre_mark }}{% endif %}
           </div>
-          <div style="font-size:0.9em;color:#555;">
+          <div class="event-detail">
             After: {{ e.post_owner or "—" }}
             {% if e.post_state == 1 %}(Locked){% elif e.post_state == -1 %}(At risk){% elif e.post_state == 0 %}(Default){% endif %}
             {% if e.post_mark %} — mark: {{ e.post_mark }}{% endif %}
           </div>
         {% endif %}
-      </li>
+      </div>
     {% endfor %}
-  </ul>
+  </div>
 {% endif %}
 
 {% endblock %}

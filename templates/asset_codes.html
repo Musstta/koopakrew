@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h2>Image asset codes</h2>
+<p>
+  Drop cup logos in <code>static/images/cups/&lt;cup_code&gt;.ext</code> and track art in
+  <code>static/images/tracks/&lt;track_code&gt;.ext</code>.
+  Supported extensions: png, jpg, jpeg, webp, gif, svg.
+</p>
+
+<h3>Cups</h3>
+<div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Code</th>
+        <th>Name (EN)</th>
+        <th>Name (ES)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cup in cups %}
+        <tr>
+          <td><code>{{ cup.code }}</code></td>
+          <td>{{ cup.en }}</td>
+          <td>{{ cup.es }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h3 style="margin-top:24px;">Tracks (grouped by cup)</h3>
+{% for code, block in cup_tracks.items() %}
+  <div class="totals">
+    <strong>{{ block.cup_en }} — <code>{{ code }}</code></strong>
+    <div class="table-scroll" style="margin-top:8px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Track code</th>
+            <th>Name (EN)</th>
+            <th>Name (ES)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tr in block.tracks %}
+            <tr>
+              <td><code>{{ tr.code }}</code></td>
+              <td>{{ tr.en }}</td>
+              <td>{{ tr.es }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endfor %}
+
+{% endblock %}

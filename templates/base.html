@@ -5,21 +5,94 @@
   <title>Koopa Krew — {{ season_label }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px}
+    :root{
+      --accent:#1e88e5;
+      --bg-muted:#f7f7f7;
+      --border:#dddddd;
+    }
+    *{box-sizing:border-box;}
+    body{font-family:system-ui,"Segoe UI",Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px;line-height:1.45;color:#242424}
     .cup{margin:18px 0}
     .locked{color:#2e7d32;font-weight:600}
     .risk{color:#c62828;font-weight:600}
     .normal{color:#555}
-    .grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px}
-    .card{border:1px solid #ddd;border-radius:12px;padding:12px}
-    .hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap: 12px;}
-    .totals{margin:12px 0;padding:8px 12px;background:#f7f7f7;border-radius:8px}
-    a.btn, button.btn{display:inline-block;padding:6px 10px;border:1px solid #888;border-radius:8px;text-decoration:none;background:#fff;cursor:pointer}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+    .card{border:1px solid var(--border);border-radius:12px;padding:12px;background:#fff;display:flex;flex-direction:column;gap:6px}
+    .card-footer{margin-top:auto;display:flex;justify-content:flex-end}
+    .hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap}
+    nav{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .totals{margin:12px 0;padding:12px;background:var(--bg-muted);border-radius:8px}
+    a.btn, button.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid #888;border-radius:999px;text-decoration:none;background:#fff;cursor:pointer;font-weight:500;color:#4a148c}
+    a.btn:hover, button.btn:hover{border-color:var(--accent);color:var(--accent)}
     form.inline{display:inline}
     .flash{padding:8px 12px;border-radius:8px;margin:8px 0}
     .flash.success{background:#e8f5e9;border:1px solid #a5d6a7}
     .flash.error{background:#ffebee;border:1px solid #ef9a9a}
     .flash.info{background:#e3f2fd;border:1px solid #90caf9}
+    .table-scroll{overflow-x:auto}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:6px 8px;border:1px solid var(--border);text-align:left}
+    th{background:#fafafa;font-weight:600}
+    .stats-table{min-width:500px}
+    .stats-table td.metric-name{position:sticky;left:0;background:#fff;font-weight:600;z-index:1;min-width:140px}
+    .stats-table tr:nth-child(even){background:#fcfcfc}
+    .stats-table tr.metric-group-control td.metric-name{background:#eef5fd}
+    .stats-table tr.metric-group-performance td.metric-name{background:#f4f9ef}
+    .stats-table tr.metric-group-risk td.metric-name{background:#fff8ef}
+    .stats-table tr.metric-group-defense td.metric-name{background:#f7eefb}
+    .legend-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:0.85em;font-weight:500;margin-right:8px;margin-bottom:6px}
+    .legend-pill.control{background:#eef5fd}
+    .legend-pill.performance{background:#f4f9ef}
+    .legend-pill.risk{background:#fff8ef}
+    .legend-pill.defense{background:#f7eefb}
+    .filter-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:flex-end;margin-bottom:8px}
+    .filter-form label{font-size:0.9em;color:#333;display:flex;flex-direction:column;gap:4px}
+    .filter-form select{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:10px;background:#fff;font-size:0.95em}
+    .filter-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .event-card{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:#fff;margin-bottom:8px}
+    .event-card .event-header{display:flex;gap:6px;flex-wrap:wrap;font-size:0.9em;color:#555}
+    .event-detail{font-size:0.9em;color:#555}
+    .form-card{border:1px solid var(--border);border-radius:12px;padding:16px;background:#fff;max-width:420px}
+    .form-card form{display:flex;flex-direction:column;gap:12px}
+    .form-card select,.form-card input[type="text"]{padding:6px;border:1px solid var(--border);border-radius:8px}
+    details.cup-panel{border:1px solid var(--border);border-radius:16px;background:#fff;margin-bottom:16px;overflow:hidden}
+    details.cup-panel summary{list-style:none;padding:12px;display:flex;align-items:center;gap:12px;cursor:pointer}
+    details.cup-panel summary::-webkit-details-marker{display:none}
+    .cup-logo{width:64px;height:64px;border-radius:50%;background:#fafafa;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border:1px solid var(--border)}
+    .cup-logo img{width:100%;height:100%;object-fit:contain}
+    .cup-logo-placeholder{font-weight:700;color:#607d8b}
+    .cup-tracks{display:flex;flex-direction:column;gap:12px;padding:12px;background:#fafafa}
+    .track-card{position:relative;border:1px solid var(--border);border-radius:18px;background:#fff;padding:14px;flex:1;min-height:140px;display:flex}
+    .track-card.has-art{color:#fff;border:none;background-size:cover;background-position:center}
+    .track-card.has-art::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.25),rgba(0,0,0,0.7));border-radius:18px}
+    .track-card.has-art .badge{background:rgba(0,0,0,0.35);color:#fff}
+    .track-content{position:relative;z-index:1;display:flex;flex-direction:column;gap:6px;width:100%}
+    .track-card.no-art .track-content{color:#242424}
+    .track-card.no-art{background:#fff}
+    .track-names small{display:block;color:#607d8b}
+    .track-card.has-art .track-names small{color:#bbdefb}
+    .track-state{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+    .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:0.8em;background:#eceff1;margin-right:4px}
+    .badge-locked{background:#e8f5e9;color:#2e7d32}
+    .badge-risk{background:#ffebee;color:#c62828}
+    .badge-hunter{background:#fff3e0;color:#ef6c00}
+    .badge-default{background:#eceff1;color:#455a64}
+    .track-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+    .top-value{font-weight:600;color:#1e88e5}
+    .info-tip{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#d1d5db;color:#333;font-size:0.75em;margin-left:6px;border:none;cursor:pointer}
+    .info-tip:focus{outline:2px solid var(--accent)}
+    .info-tip::after{content:"i"}
+    .info-text{display:none;font-size:0.78em;color:#555;margin-top:4px}
+    .info-tip.active + .info-text{display:block}
+    .player-name-input{width:140px;max-width:100%}
+    @media (max-width:720px){
+      .hdr{flex-direction:column;align-items:flex-start}
+      nav{width:100%;justify-content:flex-start}
+      .stats-table td.metric-name{min-width:120px;font-size:0.95em}
+      .stats-table td{font-size:0.95em}
+      .track-card{min-height:200px}
+      .filter-actions .btn{width:100%;justify-content:center}
+    }
   </style>
 </head>
 <body>
@@ -29,6 +102,8 @@
       <a class="btn" href="{{ url_for('index') }}">Standings</a>
       <a class="btn" href="{{ url_for('events_log') }}">Events</a>
       <a class="btn" href="{{ url_for('stats_page') }}">Stats</a>
+      <a class="btn" href="{{ url_for('admin_players') }}">Players</a>
+      <a class="btn" href="{{ url_for('asset_codes') }}">Codes</a>
       <form class="inline" action="{{ url_for('undo') }}" method="post">
         <button class="btn" type="submit">Undo last change</button>
       </form>
@@ -42,5 +117,16 @@
     {% endif %}
   {% endwith %}
   {% block body %}{% endblock %}
+  <script>
+    document.addEventListener("click", function(ev) {
+      const tip = ev.target.closest(".info-tip");
+      document.querySelectorAll(".info-tip.active").forEach(btn => {
+        if (btn !== tip) btn.classList.remove("active");
+      });
+      if (tip) {
+        tip.classList.toggle("active");
+      }
+    });
+  </script>
 </body>
 </html>

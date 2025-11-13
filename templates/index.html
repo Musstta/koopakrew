@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block body %}
 
-<form method="get" class="totals" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-  <div>
-    <label for="owner">Owner</label><br>
+<form method="get" class="totals filter-form">
+  <label>
+    Owner
     <select id="owner" name="owner">
       <option value="all" {{ "selected" if selected_filters.owner == "all" else "" }}>All</option>
       {% for p in players %}
         <option value="{{ p }}" {{ "selected" if selected_filters.owner == p else "" }}>{{ p }}</option>
       {% endfor %}
     </select>
-  </div>
-  <div>
-    <label for="cup">Cup</label><br>
+  </label>
+  <label>
+    Cup
     <select id="cup" name="cup">
       <option value="all" {{ "selected" if selected_filters.cup == "all" else "" }}>All</option>
       {% for c in cups %}
@@ -21,23 +21,40 @@
         </option>
       {% endfor %}
     </select>
-  </div>
-  <div>
-    <label for="state">State</label><br>
+  </label>
+  <label>
+    State
     <select id="state" name="state">
       <option value="any" {{ "selected" if selected_filters.state == "any" else "" }}>Any</option>
       <option value="locked" {{ "selected" if selected_filters.state == "locked" else "" }}>Locked</option>
       <option value="default" {{ "selected" if selected_filters.state == "default" else "" }}>Default</option>
       <option value="at-risk" {{ "selected" if selected_filters.state in ["at-risk","atrisk","at_risk"] else "" }}>At Risk</option>
     </select>
-  </div>
-  <div style="margin:8px 0;">
+  </label>
+  <div class="filter-actions">
     <button class="btn" type="submit">Apply</button>
     <a class="btn" href="{{ url_for('index') }}">Reset</a>
-    <a class="btn" href="{{ url_for('export_standings', owner=selected_filters.owner, cup=selected_filters.cup, state=selected_filters.state) }}">Export CSV</a>
-    <a class="btn" href="{{ url_for('export_events') }}">Export events CSV</a>
   </div>
 </form>
+
+<div style="text-align:right;margin-top:-8px;margin-bottom:12px;font-size:0.85em;color:#555;">
+  Debug exports:
+  <a href="{{ url_for('export_standings', owner=selected_filters.owner, cup=selected_filters.cup, state=selected_filters.state) }}">
+    Standings CSV
+  </a>
+  ·
+  <a href="{{ url_for('export_events') }}">Events CSV</a>
+</div>
+
+{% if default_player %}
+  <div class="totals" style="background:#e3f2fd;">
+    Quick updates enabled for <strong>{{ default_player.name }}</strong>. Set a different default in the Players tab.
+  </div>
+{% else %}
+  <div class="totals">
+    Tip: set a default player from the Players tab to unlock the “I won this one” shortcut.
+  </div>
+{% endif %}
 
 <div class="totals">
   <strong>Tracks owned:</strong>
@@ -77,31 +94,56 @@
   {% endif %}
 </div>
 
-{% for (cup_en, cup_es), items in standings.items() %}
-  <div class="cup">
-    <h2>{{ cup_en }} ({{ cup_es }})</h2>
-    <div class="grid">
-      {% for t in items %}
-        <div class="card">
-          <div><strong>{{ t['track_en'] }}</strong> ({{ t['track_es'] }})</div>
-          <div>Owner: {{ t['owner'] or "—" }}</div>
-          <div>
-            {% if t['state'] == 1 %}
-              <span class="locked">🔒 Locked</span>
-            {% elif t['state'] == -1 %}
-              <span class="risk">⚠️ At risk</span>
-              {% if t['threatened_by'] %} — mark: {{ t['threatened_by'] }}{% endif %}
-            {% else %}
-              <span class="normal">Default</span>
-            {% endif %}
-          </div>
-          <div style="margin-top:8px;">
-            <a class="btn" href="{{ url_for('update_result', track_id=t['id']) }}">Update result</a>
+{% for cup in standings %}
+  <details class="cup-panel" open>
+    <summary>
+      <div class="cup-logo">
+        {% if cup.logo_path %}
+          <img src="{{ url_for('static', filename=cup.logo_path) }}" alt="{{ cup.cup_en }} logo">
+        {% else %}
+          <div class="cup-logo-placeholder">{{ cup.cup_en[0] }}</div>
+        {% endif %}
+      </div>
+      <div>
+        <h2 style="margin:0;">{{ cup.cup_en }} ({{ cup.cup_es }})</h2>
+      </div>
+    </summary>
+    <div class="cup-tracks">
+      {% for t in cup.tracks %}
+        <div class="track-card {% if t.image_path %}has-art{% else %}no-art{% endif %}"
+             {% if t.image_path %}style="background-image:url('{{ url_for('static', filename=t.image_path) }}');"{% endif %}>
+          <div class="track-content">
+            <div class="track-names">
+              <strong>{{ t.track_en }}</strong>
+              <small>{{ t.track_es }}</small>
+            </div>
+            <div class="track-state">
+              <span class="event-detail">Owner: {{ t.owner or "—" }}</span>
+              {% if t.state == 1 %}
+                <span class="badge badge-locked">🔒 Locked</span>
+              {% elif t.state == -1 %}
+                <span class="badge badge-risk">⚠️ At risk</span>
+                {% if t.threatened_by %}
+                  <span class="badge badge-hunter">🎯 {{ t.threatened_by }} hunter</span>
+                {% endif %}
+              {% else %}
+                <span class="badge badge-default">Default</span>
+              {% endif %}
+            </div>
+            <div class="track-actions">
+              {% if default_player %}
+                <form method="get" action="{{ url_for('update_result', track_id=t.id) }}" class="inline">
+                  <input type="hidden" name="quick" value="1">
+                  <button class="btn" type="submit">I won this one</button>
+                </form>
+              {% endif %}
+              <a class="btn" href="{{ url_for('update_result', track_id=t.id) }}">Full form</a>
+            </div>
           </div>
         </div>
       {% endfor %}
     </div>
-  </div>
+  </details>
 {% endfor %}
 
 {% endblock %}
