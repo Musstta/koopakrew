@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block body %}
+
+<form method="get" class="totals" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+  <div>
+    <label for="owner">Owner</label><br>
+    <select id="owner" name="owner">
+      <option value="all" {{ "selected" if selected_filters.owner == "all" else "" }}>All</option>
+      {% for p in players %}
+        <option value="{{ p }}" {{ "selected" if selected_filters.owner == p else "" }}>{{ p }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="cup">Cup</label><br>
+    <select id="cup" name="cup">
+      <option value="all" {{ "selected" if selected_filters.cup == "all" else "" }}>All</option>
+      {% for c in cups %}
+        <option value="{{ c.code }}" {{ "selected" if selected_filters.cup == c.code else "" }}>
+          {{ c.en }} ({{ c.es }})
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label for="state">State</label><br>
+    <select id="state" name="state">
+      <option value="any" {{ "selected" if selected_filters.state == "any" else "" }}>Any</option>
+      <option value="locked" {{ "selected" if selected_filters.state == "locked" else "" }}>Locked</option>
+      <option value="default" {{ "selected" if selected_filters.state == "default" else "" }}>Default</option>
+      <option value="at-risk" {{ "selected" if selected_filters.state in ["at-risk","atrisk","at_risk"] else "" }}>At Risk</option>
+    </select>
+  </div>
+  <div style="margin:8px 0;">
+    <button class="btn" type="submit">Apply</button>
+    <a class="btn" href="{{ url_for('index') }}">Reset</a>
+    <a class="btn" href="{{ url_for('export_standings', owner=selected_filters.owner, cup=selected_filters.cup, state=selected_filters.state) }}">Export CSV</a>
+    <a class="btn" href="{{ url_for('export_events') }}">Export events CSV</a>
+  </div>
+</form>
+
+<div class="totals">
+  <strong>Tracks owned:</strong>
+  {% if not totals_overall %}
+    —
+  {% else %}
+    <ol style="margin:.2em 0 0 1.2em;padding:0;">
+      {% for pair in totals_overall %}
+        {% set p = pair[0] %}
+        {% set n = pair[1] %}
+        <li style="list-style:none;margin:.1em 0;">
+          {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}.{% endif %}
+          {{ p }}: {{ n }}
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+
+  {% set filtering = selected_filters.owner != "all" or selected_filters.cup != "all" or selected_filters.state != "any" %}
+  {% if filtering %}
+    <br>
+    <strong>Filtered tracks owned:</strong>
+    {% if not totals_filtered %}
+      —
+    {% else %}
+      <ol style="margin:.2em 0 0 1.2em;padding:0;">
+        {% for pair in totals_filtered %}
+          {% set p = pair[0] %}
+          {% set n = pair[1] %}
+          <li style="list-style:none;margin:.1em 0;">
+            {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}.{% endif %}
+            {{ p }}: {{ n }}
+          </li>
+        {% endfor %}
+      </ol>
+    {% endif %}
+  {% endif %}
+</div>
+
+{% for (cup_en, cup_es), items in standings.items() %}
+  <div class="cup">
+    <h2>{{ cup_en }} ({{ cup_es }})</h2>
+    <div class="grid">
+      {% for t in items %}
+        <div class="card">
+          <div><strong>{{ t['track_en'] }}</strong> ({{ t['track_es'] }})</div>
+          <div>Owner: {{ t['owner'] or "—" }}</div>
+          <div>
+            {% if t['state'] == 1 %}
+              <span class="locked">🔒 Locked</span>
+            {% elif t['state'] == -1 %}
+              <span class="risk">⚠️ At risk</span>
+              {% if t['threatened_by'] %} — mark: {{ t['threatened_by'] }}{% endif %}
+            {% else %}
+              <span class="normal">Default</span>
+            {% endif %}
+          </div>
+          <div style="margin-top:8px;">
+            <a class="btn" href="{{ url_for('update_result', track_id=t['id']) }}">Update result</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endfor %}
+
+{% endblock %}

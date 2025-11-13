@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h2>Event Log</h2>
+
+<p style="margin-bottom:8px;">
+  <a class="btn" href="{{ url_for('export_events') }}">Download CSV</a>
+  <a class="btn" href="{{ url_for('index') }}">Back to standings</a>
+</p>
+
+{% if not events %}
+  <p>No events yet for this season.</p>
+{% else %}
+  <ul style="list-style:none;padding:0;margin:0;">
+    {% for e in events %}
+      <li style="border:1px solid #ddd;border-radius:8px;padding:8px 10px;margin-bottom:8px;">
+        <div style="font-size:0.9em;color:#555;">
+          {{ e.occurred_at }}
+          {% if e.is_sweep %}
+            • <span style="color:#c62828;font-weight:600;">SWEEP</span>
+          {% endif %}
+        </div>
+
+        {% if e.is_sweep %}
+          <div>
+            🧹 {{ e.sweep_owner }} swept
+            <strong>{{ e.sweep_cup_en }}</strong>
+            ({{ e.sweep_cup_es }})
+          </div>
+        {% else %}
+          <div>
+            <strong>{{ e.track_en }}</strong> ({{ e.track_es }}) —
+            {{ e.cup_en }} ({{ e.cup_es }})
+          </div>
+          <div>
+            Winner: <strong>{{ e.winner }}</strong>
+          </div>
+          <div style="font-size:0.9em;color:#555;">
+            Before: {{ e.pre_owner or "—" }}
+            {% if e.pre_state == 1 %}(Locked){% elif e.pre_state == -1 %}(At risk){% elif e.pre_state == 0 %}(Default){% endif %}
+            {% if e.pre_mark %} — mark: {{ e.pre_mark }}{% endif %}
+          </div>
+          <div style="font-size:0.9em;color:#555;">
+            After: {{ e.post_owner or "—" }}
+            {% if e.post_state == 1 %}(Locked){% elif e.post_state == -1 %}(At risk){% elif e.post_state == 0 %}(Default){% endif %}
+            {% if e.post_mark %} — mark: {{ e.post_mark }}{% endif %}
+          </div>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block body %}
+<h2>Update Race Result</h2>
+<p>
+  <strong>{{ track['track_en'] }}</strong> ({{ track['track_es'] }})<br>
+  Cup: {{ track['cup_en'] }} ({{ track['cup_es'] }})<br>
+  Current owner: <strong>{{ track['owner'] or "—" }}</strong><br>
+  State:
+  {% if track['state'] == 1 %}<span class="locked">🔒 Locked</span>
+  {% elif track['state'] == -1 %}<span class="risk">⚠️ At risk</span>
+  {% else %}<span class="normal">Default</span>{% endif %}
+</p>
+
+<form method="post">
+  <label for="winner">Winner:</label>
+  <select name="winner" id="winner" required>
+    {% for p in players %}
+      <option value="{{ p }}" {% if p == track['owner'] %}selected{% endif %}>{{ p }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn" type="submit">Save</button>
+  <a class="btn" href="{{ url_for('index') }}">Cancel</a>
+</form>
+{% endblock %}
