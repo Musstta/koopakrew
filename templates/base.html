@@ -62,15 +62,13 @@
     .cup-logo img{width:100%;height:100%;object-fit:contain}
     .cup-logo-placeholder{font-weight:700;color:#607d8b}
     .cup-tracks{display:flex;flex-direction:column;gap:12px;padding:12px;background:#fafafa}
-    .track-card{position:relative;border:1px solid var(--border);border-radius:18px;background:#fff;padding:14px;flex:1;min-height:140px;display:flex}
-    .track-card.has-art{color:#fff;border:none;background-size:cover;background-position:center}
-    .track-card.has-art::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.25),rgba(0,0,0,0.7));border-radius:18px}
-    .track-card.has-art .badge{background:rgba(0,0,0,0.35);color:#fff}
-    .track-content{position:relative;z-index:1;display:flex;flex-direction:column;gap:6px;width:100%}
-    .track-card.no-art .track-content{color:#242424}
-    .track-card.no-art{background:#fff}
-    .track-names small{display:block;color:#607d8b}
-    .track-card.has-art .track-names small{color:#bbdefb}
+    .track-card{border:1px solid var(--border);border-radius:18px;background:#fff;padding:12px;display:flex;align-items:center;gap:14px}
+    .track-thumb-wrapper{width:300px;max-width:44%;flex-shrink:0}
+    .track-thumb{width:100%;aspect-ratio:160/111;border-radius:20px;object-fit:contain;background:#000;display:block;box-shadow:0 6px 16px rgba(0,0,0,0.25)}
+    .track-thumb-placeholder{width:100%;aspect-ratio:160/111;border-radius:20px;background:#eceff1;color:#607d8b;display:flex;align-items:center;justify-content:center;font-size:2em;font-weight:700}
+    .track-content{display:flex;flex-direction:column;gap:6px;width:100%}
+    .track-names strong{color:#0d1f34;text-shadow:0 0 4px rgba(255,255,255,0.85)}
+    .track-names small{display:block;color:#5f6c80;text-shadow:0 0 4px rgba(255,255,255,0.95)}
     .track-state{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
     .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:0.8em;background:#eceff1;margin-right:4px}
     .badge-locked{background:#e8f5e9;color:#2e7d32}
@@ -78,6 +76,7 @@
     .badge-hunter{background:#fff3e0;color:#ef6c00}
     .badge-default{background:#eceff1;color:#455a64}
     .track-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+    .owner-line{color:#0f2954;font-weight:600;text-shadow:0 0 4px rgba(255,255,255,0.8)}
     .top-value{font-weight:600;color:#1e88e5}
     .info-tip{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#d1d5db;color:#333;font-size:0.75em;margin-left:6px;border:none;cursor:pointer}
     .info-tip:focus{outline:2px solid var(--accent)}
@@ -85,12 +84,29 @@
     .info-text{display:none;font-size:0.78em;color:#555;margin-top:4px}
     .info-tip.active + .info-text{display:block}
     .player-name-input{width:140px;max-width:100%}
+    .btn.icon{padding:4px 8px;font-size:0.9em}
     @media (max-width:720px){
       .hdr{flex-direction:column;align-items:flex-start}
       nav{width:100%;justify-content:flex-start}
       .stats-table td.metric-name{min-width:120px;font-size:0.95em}
       .stats-table td{font-size:0.95em}
-      .track-card{min-height:200px}
+      .track-card{flex-direction:column;align-items:flex-start;padding:12px}
+      .track-thumb-wrapper{width:160px;max-width:160px;margin-bottom:8px}
+      .track-thumb{width:160px}
+      .track-thumb-placeholder{width:160px}
+      .track-content{width:100%}
+      .track-card.has-art{color:#fff;border:none;background-image:var(--track-art);background-size:cover;background-position:center;position:relative;min-height:160px;padding:14px}
+      .track-card.has-art::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.1),rgba(0,0,0,0.88));border-radius:18px}
+      .track-card.has-art .track-content{position:relative;z-index:1}
+      .track-card.has-art .track-actions{position:relative}
+      .track-card.has-art .track-names strong,
+      .track-card.has-art .track-names small,
+      .track-card.has-art .owner-line{
+        color:#fff;
+        text-shadow:0 2px 6px rgba(0,0,0,0.85);
+      }
+      .track-card.has-art .badge{background:rgba(0,0,0,0.45);color:#fff}
+      .track-card.has-art .track-thumb-wrapper{display:none}
       .filter-actions .btn{width:100%;justify-content:center}
     }
   </style>
@@ -103,7 +119,6 @@
       <a class="btn" href="{{ url_for('events_log') }}">Events</a>
       <a class="btn" href="{{ url_for('stats_page') }}">Stats</a>
       <a class="btn" href="{{ url_for('admin_players') }}">Players</a>
-      <a class="btn" href="{{ url_for('asset_codes') }}">Codes</a>
       <form class="inline" action="{{ url_for('undo') }}" method="post">
         <button class="btn" type="submit">Undo last change</button>
       </form>

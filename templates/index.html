@@ -98,8 +98,8 @@
   <details class="cup-panel" open>
     <summary>
       <div class="cup-logo">
-        {% if cup.logo_path %}
-          <img src="{{ url_for('static', filename=cup.logo_path) }}" alt="{{ cup.cup_en }} logo">
+        {% if cup.logo_src %}
+          <img src="{{ cup.logo_src }}" alt="{{ cup.cup_en }} logo">
         {% else %}
           <div class="cup-logo-placeholder">{{ cup.cup_en[0] }}</div>
         {% endif %}
@@ -110,21 +110,30 @@
     </summary>
     <div class="cup-tracks">
       {% for t in cup.tracks %}
-        <div class="track-card {% if t.image_path %}has-art{% else %}no-art{% endif %}"
-             {% if t.image_path %}style="background-image:url('{{ url_for('static', filename=t.image_path) }}');"{% endif %}>
+        {% set has_art = t.image_src is not none %}
+        <div class="track-card {% if has_art %}has-art{% endif %}" {% if has_art %}style="--track-art: url('{{ t.image_src }}');"{% endif %}>
+          <div class="track-thumb-wrapper">
+            {% if has_art %}
+              <img class="track-thumb" src="{{ t.image_src }}" alt="{{ t.track_en }}">
+            {% else %}
+              <div class="track-thumb-placeholder">{{ t.track_en[0] }}</div>
+            {% endif %}
+          </div>
           <div class="track-content">
             <div class="track-names">
               <strong>{{ t.track_en }}</strong>
               <small>{{ t.track_es }}</small>
             </div>
+            <div class="owner-line">
+              Owner: {{ t.owner or "—" }}
+            </div>
             <div class="track-state">
-              <span class="event-detail">Owner: {{ t.owner or "—" }}</span>
               {% if t.state == 1 %}
                 <span class="badge badge-locked">🔒 Locked</span>
               {% elif t.state == -1 %}
                 <span class="badge badge-risk">⚠️ At risk</span>
                 {% if t.threatened_by %}
-                  <span class="badge badge-hunter">🎯 {{ t.threatened_by }} hunter</span>
+                  <span class="badge badge-hunter">🎯 {{ t.threatened_by }}</span>
                 {% endif %}
               {% else %}
                 <span class="badge badge-default">Default</span>
@@ -137,7 +146,7 @@
                   <button class="btn" type="submit">I won this one</button>
                 </form>
               {% endif %}
-              <a class="btn" href="{{ url_for('update_result', track_id=t.id) }}">Full form</a>
+              <a class="btn icon" href="{{ url_for('update_result', track_id=t.id) }}" aria-label="Open edit form for {{ t.track_en }}">✏️</a>
             </div>
           </div>
         </div>

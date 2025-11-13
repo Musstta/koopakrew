@@ -37,7 +37,8 @@
           <td class="metric-name">
             {{ metric.label }}
             {% if metric.help %}
-              <span class="info-tip" title="{{ metric.help }}"></span>
+              <button type="button" class="info-tip"></button>
+              <span class="info-text">{{ metric.help }}</span>
             {% endif %}
           </td>
           {% for cell in metric.cells %}

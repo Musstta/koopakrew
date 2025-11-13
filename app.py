@@ -36,6 +36,20 @@ def track_image_path(code: str | None) -> str | None:
     return resolve_asset_path("tracks", code)
 
 
+def cup_image_url(cup_dict):
+    local = cup_image_path(cup_dict.get("cup_code"))
+    if local:
+        return url_for("static", filename=local)
+    return None
+
+
+def track_image_url(track_dict):
+    local = track_image_path(track_dict.get("track_code"))
+    if local:
+        return url_for("static", filename=local)
+    return None
+
+
 METRIC_DEFS = [
     {"id": "tracks_owned", "label": "Tracks", "type": "value", "value_key": "tracks_owned", "group": "control", "sort_mode": "value", "help": "Tracks currently controlled."},
     {"id": "locked_tracks", "label": "Locked", "type": "value", "value_key": "locked_tracks", "group": "control", "sort_mode": "value", "help": "Owned tracks that are locked."},
@@ -595,9 +609,9 @@ def index():
                                 cup_code=cup_f,
                                 state_filter=state_f)
     for cup in standings:
-        cup["logo_path"] = cup_image_path(cup["cup_code"])
+        cup["logo_src"] = cup_image_url(cup)
         for track in cup["tracks"]:
-            track["image_path"] = track_image_path(track["track_code"])
+            track["image_src"] = track_image_url(track)
 
     # Totals (overall, not filtered) and sort for medals
     totals_overall = fetch_totals_overall(db, season_id)  # list of (owner, n)
@@ -1558,29 +1572,6 @@ def clear_default_player():
     flash("Cleared your default player.", "info")
     show_mode = request.form.get("show_mode")
     return redirect(url_for("admin_players", show=show_mode) if show_mode else url_for("admin_players"))
-
-@app.route("/asset-codes")
-def asset_codes():
-    db = get_db()
-    cups = db.execute("SELECT code, en, es FROM cups ORDER BY [order]").fetchall()
-    tracks = db.execute(
-        """
-        SELECT t.code, t.en, t.es, c.en AS cup_en, c.code AS cup_code
-        FROM tracks t
-        JOIN cups c ON c.id = t.cup_id
-        ORDER BY c.[order], t.order_in_cup
-        """
-    ).fetchall()
-    cup_map = {}
-    for row in tracks:
-        cup_map.setdefault(row["cup_code"], {"cup_en": row["cup_en"], "tracks": []})
-        cup_map[row["cup_code"]]["tracks"].append(row)
-    return render_template(
-        "asset_codes.html",
-        cups=cups,
-        cup_tracks=cup_map,
-        season_label=get_current_season_row(db)["label"]
-    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
