@@ -22,7 +22,8 @@ htmlcov/
 koopakrew.db
 *.db
 tmp/
-MK8TracksS2.csv
+MK8Tracks*.csv
+!MK8TracksSeason1.csv
 
 # Editors and IDEs
 .vscode/
