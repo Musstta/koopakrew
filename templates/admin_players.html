@@ -1,51 +1,51 @@
 {% extends "base.html" %}
 {% block body %}
 
-<h2>Player management</h2>
+<h2>{{ _("Player management") }}</h2>
 
 <div class="totals" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
-  <div>Active: {{ counts.active }} · Inactive: {{ counts.inactive }}</div>
+  <div>{{ _("Active:") }} {{ counts.active }} · {{ _("Inactive:") }} {{ counts.inactive }}</div>
   <form method="get" style="display:flex;gap:8px;align-items:center;">
-    <label style="display:flex;flex-direction:column;gap:4px;">View
+    <label style="display:flex;flex-direction:column;gap:4px;">{{ _("View") }}
       <select name="show">
-        <option value="active" {% if show_mode != "all" %}selected{% endif %}>Active only</option>
-        <option value="all" {% if show_mode == "all" %}selected{% endif %}>All players</option>
+        <option value="active" {% if show_mode != "all" %}selected{% endif %}>{{ _("Active only") }}</option>
+        <option value="all" {% if show_mode == "all" %}selected{% endif %}>{{ _("All players") }}</option>
       </select>
     </label>
-    <button class="btn" type="submit">Apply</button>
+    <button class="btn" type="submit">{{ _("Apply") }}</button>
   </form>
 </div>
 
 {% if default_player %}
-  <div class="totals" style="background:#e3f2fd;">
-    Default player: <strong>{{ default_player.name }}</strong>
+  <div class="totals soft-panel">
+    {{ _("Default player:") }} <strong>{{ default_player.name }}</strong>
     <form method="post" action="{{ url_for('clear_default_player') }}" class="inline" style="margin-left:12px;">
       <input type="hidden" name="show_mode" value="{{ show_mode }}">
-      <button class="btn" type="submit">Clear default</button>
+      <button class="btn" type="submit">{{ _("Clear default") }}</button>
     </form>
   </div>
 {% endif %}
 
-<h3>Add a player</h3>
+<h3>{{ _("Add a player") }}</h3>
 <form method="post" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
   <input type="hidden" name="action" value="add">
   <input type="hidden" name="show_mode" value="{{ show_mode }}">
   <label style="display:flex;flex-direction:column;">
-    Name
-    <input class="player-name-input" type="text" name="name" placeholder="New player name" required>
+    {{ _("Name") }}
+    <input class="player-name-input" type="text" name="name" placeholder="{{ _('New player name') }}" required>
   </label>
-  <button class="btn" type="submit">Add</button>
+  <button class="btn" type="submit">{{ _("Add") }}</button>
 </form>
 
-<h3>Existing players</h3>
+<h3>{{ _("Existing players") }}</h3>
 <div class="table-scroll">
   <table>
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Status</th>
-        <th>Default</th>
-        <th>Actions</th>
+        <th>{{ _("Name") }}</th>
+        <th>{{ _("Status") }}</th>
+        <th>{{ _("Default") }}</th>
+        <th>{{ _("Actions") }}</th>
       </tr>
     </thead>
     <tbody>
@@ -57,14 +57,14 @@
               <input type="hidden" name="player_id" value="{{ p.id }}">
               <input type="hidden" name="show_mode" value="{{ show_mode }}">
               <input class="player-name-input" type="text" name="name" value="{{ p.name }}" required>
-              <button class="btn" type="submit">Save</button>
+              <button class="btn" type="submit">{{ _("Save") }}</button>
             </form>
           </td>
           <td style="text-align:center;">
             {% if p.active %}
-              <span style="color:#2e7d32;font-weight:600;">Active</span>
+              <span style="color:#2e7d32;font-weight:600;">{{ _("Active") }}</span>
             {% else %}
-              <span style="color:#c62828;font-weight:600;">Inactive</span>
+              <span style="color:#c62828;font-weight:600;">{{ _("Inactive") }}</span>
             {% endif %}
           </td>
           <td style="text-align:center;">
@@ -74,14 +74,14 @@
                 <input type="hidden" name="show_mode" value="{{ show_mode }}">
                 <button class="btn" type="submit">
                   {% if default_player and default_player.id == p.id %}
-                    ✅ Default
+                    ✅ {{ _("Default") }}
                   {% else %}
-                    Set default
+                    {{ _("Set default") }}
                   {% endif %}
                 </button>
               </form>
             {% else %}
-              <span class="event-detail">Activate to set</span>
+              <span class="event-detail">{{ _("Activate to set") }}</span>
             {% endif %}
           </td>
           <td style="text-align:center;">
@@ -91,9 +91,9 @@
               <input type="hidden" name="show_mode" value="{{ show_mode }}">
               <button class="btn" type="submit"
                 {% if p.active %}
-                  onclick="return confirm('Deactivate {{ p.name }}? They will disappear from standings until reactivated.');"
+                  onclick="return confirm('{{ _('Deactivate {name}? They will disappear from standings until reactivated.').format(name=p.name) }}');"
                 {% endif %}>
-                {% if p.active %}Deactivate{% else %}Activate{% endif %}
+                {% if p.active %}{{ _('Deactivate') }}{% else %}{{ _('Activate') }}{% endif %}
               </button>
             </form>
           </td>

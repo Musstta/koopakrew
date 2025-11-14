@@ -1,80 +1,80 @@
 {% extends "base.html" %}
 {% block body %}
-<h2>Koopa Krew Tournament Rules</h2>
-<p>The Koopa Krew tracker encodes the exact behaviours of our Mario Kart 8 league. Everything below is enforced by the app’s state machine.</p>
+<h2>{{ _("Koopa Krew Tournament Rules") }}</h2>
+<p>{{ _("The Koopa Krew tracker encodes the exact behaviours of our Mario Kart 8 league. Everything below is enforced by the app’s state machine.") }}</p>
 
 <div class="totals">
-  <h3>Seasons</h3>
+  <h3>{{ _("Seasons") }}</h3>
   <ul>
-    <li>Play is divided into quarterly seasons (e.g., 2025 Q4).</li>
-    <li>Each new season clones cups/tracks from the latest populated season.</li>
-    <li>Only the active season is editable; past seasons live in the archive.</li>
+    <li>{{ _("Play is divided into quarterly seasons (e.g., 2025 Q4).") }}</li>
+    <li>{{ _("Each new season clones cups/tracks from the latest populated season.") }}</li>
+    <li>{{ _("Only the active season is editable; past seasons live in the archive.") }}</li>
   </ul>
 </div>
 
 <div class="totals">
-  <h3>Track States</h3>
+  <h3>{{ _("Track States") }}</h3>
   <ol>
-    <li><strong>No owner:</strong> first recorded winner claims the track (Default).</li>
-    <li><strong>Owner wins (Default):</strong> track becomes Locked.</li>
-    <li><strong>Owner loses (Default):</strong> challenger pushes the track to At Risk and becomes the “hunter”.</li>
-    <li><strong>Owner wins (At Risk):</strong> track returns to Default.</li>
-    <li><strong>Challenger wins (At Risk):</strong> ownership flips, track resets to Default.</li>
-    <li><strong>Owner loses (Locked):</strong> lock breaks but ownership remains.</li>
+    <li><strong>{{ _("No owner:") }}</strong> {{ _("first recorded winner claims the track (Default).") }}</li>
+    <li><strong>{{ _("Owner wins (Default):") }}</strong> {{ _("track becomes Locked.") }}</li>
+    <li><strong>{{ _("Owner loses (Default):") }}</strong> {{ _("challenger pushes the track to At Risk and becomes the “hunter”.") }}</li>
+    <li><strong>{{ _("Owner wins (At Risk):") }}</strong> {{ _("track returns to Default.") }}</li>
+    <li><strong>{{ _("Challenger wins (At Risk):") }}</strong> {{ _("ownership flips, track resets to Default.") }}</li>
+    <li><strong>{{ _("Owner loses (Locked):") }}</strong> {{ _("lock breaks but ownership remains.") }}</li>
   </ol>
 </div>
 
 <div class="totals">
-  <h3>Sweeps & Locks</h3>
+  <h3>{{ _("Sweeps & Locks") }}</h3>
   <ul>
-    <li>Owning all four tracks of a cup triggers a sweep: every track becomes Locked.</li>
-    <li>Sweep effects are stored as separate events so they can be undone safely.</li>
+    <li>{{ _("Owning all four tracks of a cup triggers a sweep: every track becomes Locked.") }}</li>
+    <li>{{ _("Sweep effects are stored as separate events so they can be undone safely.") }}</li>
   </ul>
 </div>
 
 <div class="totals">
-  <h3>Events & Undo</h3>
+  <h3>{{ _("Events & Undo") }}</h3>
   <ul>
-    <li>Every race result persists pre/post snapshots (owner, state, threat).</li>
-    <li><strong>Undo</strong> always targets the latest event, restoring the snapshots and deleting the record.</li>
-    <li>Sweep events undo recursively—removing the sweep also undoes the triggering race.</li>
-    <li><strong>Player deactivation</strong> is logged as a synthetic event so the action (player inactive + tracks cleared) can be undone with a single click.</li>
+    <li>{{ _("Every race result persists pre/post snapshots (owner, state, threat).") }}</li>
+    <li><strong>{{ _("Undo") }}</strong> {{ _("always targets the latest event, restoring the snapshots and deleting the record.") }}</li>
+    <li>{{ _("Sweep events undo recursively—removing the sweep also undoes the triggering race.") }}</li>
+    <li><strong>{{ _("Player deactivation") }}</strong> {{ _("is logged as a synthetic event so the action (player inactive + tracks cleared) can be undone with a single click.") }}</li>
   </ul>
 </div>
 
 <div class="totals">
-  <h3>Player Management</h3>
+  <h3>{{ _("Player Management") }}</h3>
   <ul>
-    <li>Inactive players disappear from standings and cannot own tracks.</li>
-    <li>Deactivation immediately releases their tracks to neutral Default state.</li>
-    <li>Reactivation (or undo) returns the stored ownership snapshot.</li>
+    <li>{{ _("Inactive players disappear from standings and cannot own tracks.") }}</li>
+    <li>{{ _("Deactivation immediately releases their tracks to neutral Default state.") }}</li>
+    <li>{{ _("Reactivation (or undo) returns the stored ownership snapshot.") }}</li>
   </ul>
 </div>
 
 <div class="totals">
-  <h3>Stats & Highlights</h3>
+  <h3>{{ _("Stats & Highlights") }}</h3>
   <ul>
-    <li>Stats recompute from the event history every time you visit the page.</li>
-    <li>Badges: “Hot hand” for win streak ≥ 2, “Shield wall” for defense streak ≥ 2.</li>
-    <li>Track insights require a single-season view; All-season aggregations disable the dropdown.</li>
+    <li>{{ _("Stats recompute from the event history every time you visit the page.") }}</li>
+    <li>{{ _("Badges: “Hot hand” for win streak ≥ 2, “Shield wall” for defense streak ≥ 2.") }}</li>
+    <li>{{ _("Track insights require a single-season view; All-season aggregations disable the dropdown.") }}</li>
   </ul>
 </div>
 
 <div class="totals">
-  <h3>Archives</h3>
+  <h3>{{ _("Archives") }}</h3>
   <ul>
-    <li>Season 1 (2025 Q3) displays a legacy CSV snapshot.</li>
-    <li>Seasons 2+ render live standings, stats, and highlights pulled straight from the database.</li>
+    <li>{{ _("Season 1 (2025 Q3) displays a legacy CSV snapshot.") }}</li>
+    <li>{{ _("Seasons 2+ render live standings, stats, and highlights pulled straight from the database.") }}</li>
   </ul>
 </div>
 
 <div class="totals">
-  <h3>Presence & Shortcuts</h3>
+  <h3>{{ _("Presence & Shortcuts") }}</h3>
   <ul>
-    <li>Setting a default player enables the “I won this one” shortcut and online presence pings.</li>
-    <li>Presence data expires after 60 seconds and is only used for the Control Center banner.</li>
+    <li>{{ _("Setting a default player enables the “I won this one” shortcut and online presence pings.") }}</li>
+    <li>{{ _("Presence data expires after 60 seconds and is only used for the Control Center banner.") }}</li>
   </ul>
 </div>
 
-<p>Whenever the tournament evolves, keep this page updated so the rules and the implementation stay in sync.</p>
+<p>{{ _("Whenever the tournament evolves, keep this page updated so the rules and the implementation stay in sync.") }}</p>
 {% endblock %}

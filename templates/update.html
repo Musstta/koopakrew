@@ -1,36 +1,48 @@
 {% extends "base.html" %}
 {% block body %}
-<h2>Update Race Result</h2>
+<h2>{{ _("Update Race Result") }}</h2>
 <div class="totals">
-  <div><strong>{{ track['en'] }}</strong> ({{ track['es'] }})</div>
-  <div>Cup: {{ track['cup_en'] }} ({{ track['cup_es'] }})</div>
-  <div>Owner: <strong>{{ track['owner'] or "—" }}</strong></div>
   <div>
-    State:
-    {% if track['state'] == 1 %}<span class="locked">🔒 Locked</span>
-    {% elif track['state'] == -1 %}<span class="risk">⚠️ At risk</span>
-    {% else %}<span class="normal">Default</span>{% endif %}
+    {% if current_lang == 'es' %}
+      <strong>{{ track['es'] }}</strong> ({{ track['en'] }})
+    {% else %}
+      <strong>{{ track['en'] }}</strong> ({{ track['es'] }})
+    {% endif %}
+  </div>
+  <div>{{ _("Cup:") }}
+    {% if current_lang == 'es' %}
+      {{ track['cup_es'] }} ({{ track['cup_en'] }})
+    {% else %}
+      {{ track['cup_en'] }} ({{ track['cup_es'] }})
+    {% endif %}
+  </div>
+  <div>{{ _("Owner:") }} <strong>{{ track['owner'] or "—" }}</strong></div>
+  <div>
+    {{ _("State:") }}
+    {% if track['state'] == 1 %}<span class="locked">🔒 {{ _("Locked") }}</span>
+    {% elif track['state'] == -1 %}<span class="risk">⚠️ {{ _("At risk") }}</span>
+    {% else %}<span class="normal">{{ _("Default") }}</span>{% endif %}
   </div>
 </div>
 
 {% if prefill_winner %}
-  <div class="form-card" style="margin-bottom:16px;background:#f1f8e9;">
-    <h3 style="margin-top:0;">Quick confirmation</h3>
-    <p>{{ prefill_winner }} is set as your default player{% if default_player %} ({{ default_player.name }}){% endif %}. Confirm this win?</p>
+  <div class="form-card success-panel" style="margin-bottom:16px;">
+    <h3 style="margin-top:0;">{{ _("Quick confirmation") }}</h3>
+    <p>{{ prefill_winner }} {{ _("is set as your default player") }}{% if default_player %} ({{ default_player.name }}){% endif %}. {{ _("Confirm this win?") }}</p>
     <form method="post" style="display:flex;flex-direction:column;gap:12px;">
       <input type="hidden" name="winner" value="{{ prefill_winner }}">
       <div class="filter-actions">
-        <button class="btn" type="submit">Yes, save it</button>
-        <a class="btn" href="{{ url_for('update_result', track_id=track['id']) }}">Choose another winner</a>
+        <button class="btn" type="submit">{{ _("Yes, save it") }}</button>
+        <a class="btn" href="{{ url_for('update_result', track_id=track['id']) }}">{{ _("Choose another winner") }}</a>
       </div>
     </form>
   </div>
 {% endif %}
 
 <div class="form-card">
-  <h3 style="margin-top:0;">Manual update</h3>
+  <h3 style="margin-top:0;">{{ _("Manual update") }}</h3>
   <form method="post">
-    <label for="winner">Winner</label>
+    <label for="winner">{{ _("Winner") }}</label>
     <select name="winner" id="winner" required>
       {% for p in players %}
         <option value="{{ p }}"
@@ -44,23 +56,30 @@
       {% endfor %}
     </select>
     <div class="filter-actions">
-      <button class="btn" type="submit">Save</button>
-      <a class="btn" href="{{ url_for('index') }}">Cancel</a>
+      <button class="btn" type="submit">{{ _("Save") }}</button>
+      <a class="btn" href="{{ url_for('index') }}">{{ _("Cancel") }}</a>
     </div>
   </form>
 </div>
 
+<div class="undo-inline">
+  <form method="post" action="{{ url_for('undo') }}" data-undo-form>
+    <input type="hidden" name="next" value="{{ request.url }}">
+    <button type="submit">↩️ {{ _('Undo last change') }}</button>
+  </form>
+</div>
+
 {% if recent_events %}
-  <h3>Recent history</h3>
+  <h3>{{ _("Recent history") }}</h3>
   <ul>
     {% for ev in recent_events %}
       <li class="event-detail">
         {{ ev['occurred_at'] }} —
-        Winner: {{ ev['winner_name'] or "—" }}.
-        Before: {{ ev['pre_owner_name'] or "—" }}
-        {% if ev['pre_state'] == 1 %}(Locked){% elif ev['pre_state'] == -1 %}(At risk){% elif ev['pre_state'] == 0 %}(Default){% endif %};
-        After: {{ ev['post_owner_name'] or "—" }}
-        {% if ev['post_state'] == 1 %}(Locked){% elif ev['post_state'] == -1 %}(At risk){% elif ev['post_state'] == 0 %}(Default){% endif %}.
+        {{ _("Winner:") }} {{ ev['winner_name'] or "—" }}.
+        {{ _("Before:") }} {{ ev['pre_owner_name'] or "—" }}
+        {% if ev['pre_state'] == 1 %}({{ _("Locked") }}){% elif ev['pre_state'] == -1 %}({{ _("At risk") }}){% elif ev['pre_state'] == 0 %}({{ _("Default") }}){% endif %};
+        {{ _("After:") }} {{ ev['post_owner_name'] or "—" }}
+        {% if ev['post_state'] == 1 %}({{ _("Locked") }}){% elif ev['post_state'] == -1 %}({{ _("At risk") }}){% elif ev['post_state'] == 0 %}({{ _("Default") }}){% endif %}.
       </li>
     {% endfor %}
   </ul>

@@ -2,79 +2,92 @@
 {% set season_param = request.args.get('season') %}
 {% block body %}
 
-<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-  <a class="btn" href="{{ url_for('index', season=season_param) }}">Back to standings</a>
-  <small style="color:#666;">CSV exports live in the Control Center ☰.</small>
-</div>
-
-<form method="get" action="{{ url_for('events_log') }}" class="filter-form" style="margin-bottom:12px;">
+<form method="get" action="{{ url_for('events_log') }}" class="totals filter-form events-filters" style="margin-bottom:12px;">
   {% if season_param %}
     <input type="hidden" name="season" value="{{ season_param }}">
   {% endif %}
-  <label>
-    Player
-    <select name="player">
-      <option value="">All players</option>
+  <div class="filter-inline-toggle">
+    {% if default_player %}
+      {% set me_active = request.args.get('me') == '1' %}
+      <a class="btn icon emoji-toggle{% if me_active %} active{% endif %}"
+         href="{{ url_for('events_log',
+           season=season_param,
+           me=None if me_active else 1,
+           cup=selected_filters.cup,
+           track=selected_filters.track,
+           event_type=selected_filters.event_type,
+           player=selected_filters.player) }}"
+         aria-pressed="{{ 'true' if me_active else 'false' }}">👤</a>
+    {% endif %}
+    <label>
+      {{ _("Player") }}
+      <select name="player">
+      <option value="">{{ _("All players") }}</option>
       {% for p in players %}
         <option value="{{ p.id }}" {% if selected_filters.player == p.id %}selected{% endif %}>
           {{ p.name }}
         </option>
       {% endfor %}
-    </select>
-  </label>
+      </select>
+    </label>
+  </div>
   <label>
-    Cup
+    {{ _("Cup") }}
     <select name="cup">
-      <option value="">All cups</option>
+      <option value="">{{ _("All cups") }}</option>
       {% for cup in cups %}
         <option value="{{ cup.id }}" {% if selected_filters.cup == cup.id %}selected{% endif %}>
-          {{ cup.en }} ({{ cup.es }})
+          {% if current_lang == 'es' %}
+            {{ cup.es }} ({{ cup.en }})
+          {% else %}
+            {{ cup.en }} ({{ cup.es }})
+          {% endif %}
         </option>
       {% endfor %}
     </select>
   </label>
   <label>
-    Track
+    {{ _("Track") }}
     <select name="track">
-      <option value="">All tracks</option>
+      <option value="">{{ _("All tracks") }}</option>
       {% for t in tracks %}
         <option value="{{ t.id }}" {% if selected_filters.track == t.id %}selected{% endif %}>
-          {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
+          {% if current_lang == 'es' %}
+            {{ t.cup_es }} — {{ t.track_es }} ({{ t.track_en }})
+          {% else %}
+            {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
+          {% endif %}
         </option>
       {% endfor %}
     </select>
   </label>
   <label>
-    Event type
+    {{ _("Event type") }}
     <select name="event_type">
-      <option value="all" {% if selected_filters.event_type == "all" %}selected{% endif %}>All events</option>
-      <option value="race" {% if selected_filters.event_type == "race" %}selected{% endif %}>Races only</option>
-      <option value="sweep" {% if selected_filters.event_type == "sweep" %}selected{% endif %}>Sweeps only</option>
+      <option value="all" {% if selected_filters.event_type == "all" %}selected{% endif %}>{{ _("All events") }}</option>
+      <option value="race" {% if selected_filters.event_type == "race" %}selected{% endif %}>{{ _("Races only") }}</option>
+      <option value="sweep" {% if selected_filters.event_type == "sweep" %}selected{% endif %}>{{ _("Sweeps only") }}</option>
     </select>
   </label>
-  <div class="filter-actions">
-    <button class="btn" type="submit">Apply filters</button>
-    <a class="btn" href="{{ url_for('events_log', season=season_param) }}">Reset</a>
-    {% if default_player %}
-      <a class="btn" href="{{ url_for('events_log',
-        season=season_param,
-        player=default_player.id,
-        cup=selected_filters.cup,
-        track=selected_filters.track,
-        event_type=selected_filters.event_type,
-        me=1) }}">
-        Involves {{ default_player.name }}
-      </a>
-    {% endif %}
+  <div class="filter-actions vertical-actions">
+    <button class="btn" type="submit">{{ _("Apply filters") }}</button>
+    <a class="btn" href="{{ url_for('events_log', season=season_param) }}">{{ _("Reset") }}</a>
   </div>
+</form>
+
+<div class="undo-inline">
+  <form method="post" action="{{ url_for('undo') }}" data-undo-form>
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button type="submit">↩️ {{ _('Undo last change') }}</button>
   </form>
+</div>
 
 <p style="font-size:0.9em;color:#555;margin-top:-4px;">
-  Showing {{ events|length }} event{{ events|length != 1 and 's' or '' }} for {{ season_label }}.
+  {{ _("Showing {count} events for {label}.").format(count=events|length, label=season_label) }}
 </p>
 
 {% if not events %}
-  <p>No events yet for this season.</p>
+  <p>{{ _("No events yet for this season.") }}</p>
 {% else %}
   <div>
     {% for e in events %}
@@ -82,33 +95,50 @@
         <div class="event-header">
           {{ e.occurred_at }}
           {% if e.is_sweep %}
-            • <span style="color:#c62828;font-weight:600;">SWEEP</span>
+            • <span style="color:#c62828;font-weight:600;">{{ _('SWEEP') }}</span>
           {% endif %}
         </div>
 
         {% if e.is_sweep %}
           <div>
-            🧹 {{ e.sweep_owner }} swept
-            <strong>{{ e.sweep_cup_en }}</strong>
-            ({{ e.sweep_cup_es }})
+            🧹 {{ e.sweep_owner }} {{ _('swept') }}
+            <strong>
+              {% if current_lang == 'es' %}
+                {{ e.sweep_cup_es }}
+              {% else %}
+                {{ e.sweep_cup_en }}
+              {% endif %}
+            </strong>
+            ({% if current_lang == 'es' %}{{ e.sweep_cup_en }}{% else %}{{ e.sweep_cup_es }}{% endif %})
           </div>
         {% else %}
           <div>
-            <strong>{{ e.track_en }}</strong> ({{ e.track_es }}) —
-            {{ e.cup_en }} ({{ e.cup_es }})
+            <strong>
+              {% if current_lang == 'es' %}
+                {{ e.track_es }}
+              {% else %}
+                {{ e.track_en }}
+              {% endif %}
+            </strong>
+            ({% if current_lang == 'es' %}{{ e.track_en }}{% else %}{{ e.track_es }}{% endif %}) —
+            {% if current_lang == 'es' %}
+              {{ e.cup_es }} ({{ e.cup_en }})
+            {% else %}
+              {{ e.cup_en }} ({{ e.cup_es }})
+            {% endif %}
           </div>
           <div>
-            Winner: <strong>{{ e.winner }}</strong>
+            {{ _("Winner:") }} <strong>{{ e.winner }}</strong>
           </div>
           <div class="event-detail">
-            Before: {{ e.pre_owner or "—" }}
-            {% if e.pre_state == 1 %}(Locked){% elif e.pre_state == -1 %}(At risk){% elif e.pre_state == 0 %}(Default){% endif %}
-            {% if e.pre_mark %} — mark: {{ e.pre_mark }}{% endif %}
+            {{ _("Before:") }} {{ e.pre_owner or "—" }}
+            {% if e.pre_state == 1 %}({{ _("Locked") }}){% elif e.pre_state == -1 %}({{ _("At risk") }}){% elif e.pre_state == 0 %}({{ _("Default") }}){% endif %}
+            {% if e.pre_mark %} — {{ _("mark:") }} {{ e.pre_mark }}{% endif %}
           </div>
           <div class="event-detail">
-            After: {{ e.post_owner or "—" }}
-            {% if e.post_state == 1 %}(Locked){% elif e.post_state == -1 %}(At risk){% elif e.post_state == 0 %}(Default){% endif %}
-            {% if e.post_mark %} — mark: {{ e.post_mark }}{% endif %}
+            {{ _("After:") }} {{ e.post_owner or "—" }}
+            {% if e.post_state == 1 %}({{ _("Locked") }}){% elif e.post_state == -1 %}({{ _("At risk") }}){% elif e.post_state == 0 %}({{ _("Default") }}){% endif %}
+            {% if e.post_mark %} — {{ _("mark:") }} {{ e.post_mark }}{% endif %}
           </div>
         {% endif %}
       </div>

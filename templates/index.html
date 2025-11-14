@@ -1,198 +1,626 @@
 {% extends "base.html" %}
 {% block body %}
 
-<form method="get" class="totals filter-form">
+{% set filtering = selected_filters.owner != "all" or selected_filters.cup != "all" or selected_filters.state != "any" %}
+
+<div class="filter-top-row">
+  <div class="default-tip {% if not default_player %}warning{% endif %}">
+    {% if default_player %}
+      {{ _("Quick updates enabled for") }} <strong>{{ default_player.name }}</strong> · {{ _("Ready for instant wins") }}
+    {% else %}
+      <span>{{ _("No racer selected — choose a default to log wins faster!") }}</span>
+      {% if player_options %}
+        <form method="post" action="{{ url_for('set_default_player') }}" class="inline" style="display:flex;gap:8px;align-items:center;">
+          <select name="player_id">
+            {% for p in player_options %}
+              <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="next" value="index">
+          <button class="btn" type="submit">{{ _("Set default") }}</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </div>
+  <button class="filter-toggle-trigger" type="button" data-filter-toggle aria-expanded="false" aria-controls="filter-panel" aria-label="{{ _('Toggle filters and search') }}">
+    🔍
+  </button>
+</div>
+
+<div class="player-modal-overlay" data-player-modal-overlay hidden></div>
+<div class="player-modal" data-player-modal hidden aria-modal="true" role="dialog">
+  <header>
+    <h3 data-player-modal-name>Player</h3>
+    <button class="player-modal-close" type="button" data-player-modal-close aria-label="{{ _('Close') }}">×</button>
+  </header>
+  <dl>
+    <dt>{{ _("At-risk saves") }}</dt>
+    <dd data-player-modal-risk>—</dd>
+    <dt>{{ _("Win rate") }}</dt>
+    <dd data-player-modal-winrate>—</dd>
+    <dt>{{ _("Tracks taken") }}</dt>
+    <dd data-player-modal-taken>—</dd>
+    <dt>{{ _("Current streak") }}</dt>
+    <dd data-player-modal-streak>—</dd>
+  </dl>
+  <div class="capture-card">
+    <h4>{{ _("Last capture") }}</h4>
+    <p data-player-modal-capture-track>{{ _("No capture yet.") }}</p>
+    <small data-player-modal-capture-cup></small><br>
+    <small data-player-modal-capture-date></small>
+  </div>
+</div>
+
+<form method="get" class="totals filter-form" id="filter-panel" data-filter-panel data-open-default="{{ 'true' if filtering else 'false' }}" hidden>
+  <div class="filter-bar-header">
+    <strong>{{ _('Filters & search') }}</strong>
+    <button class="btn icon ghost close-filter" type="button" data-filter-close aria-label="{{ _('Close filters') }}">×</button>
+  </div>
+  <div class="filter-owner-group">
+    <label>
+      {{ _("Owner") }}
+      <select id="owner" name="owner">
+        <option value="all" {{ "selected" if selected_filters.owner == "all" else "" }}>{{ _("All") }}</option>
+        {% for p in players %}
+          <option value="{{ p }}" {{ "selected" if selected_filters.owner == p else "" }}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
   <label>
-    Owner
-    <select id="owner" name="owner">
-      <option value="all" {{ "selected" if selected_filters.owner == "all" else "" }}>All</option>
-      {% for p in players %}
-        <option value="{{ p }}" {{ "selected" if selected_filters.owner == p else "" }}>{{ p }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>
-    Cup
+    {{ _("Cup") }}
     <select id="cup" name="cup">
-      <option value="all" {{ "selected" if selected_filters.cup == "all" else "" }}>All</option>
+      <option value="all" {{ "selected" if selected_filters.cup == "all" else "" }}>{{ _("All") }}</option>
       {% for c in cups %}
         <option value="{{ c.code }}" {{ "selected" if selected_filters.cup == c.code else "" }}>
-          {{ c.en }} ({{ c.es }})
+          {% if current_lang == 'es' %}
+            {{ c.es }} ({{ c.en }})
+          {% else %}
+            {{ c.en }} ({{ c.es }})
+          {% endif %}
         </option>
       {% endfor %}
     </select>
   </label>
   <label>
-    State
+    {{ _("State") }}
     <select id="state" name="state">
-      <option value="any" {{ "selected" if selected_filters.state == "any" else "" }}>Any</option>
-      <option value="locked" {{ "selected" if selected_filters.state == "locked" else "" }}>Locked</option>
-      <option value="default" {{ "selected" if selected_filters.state == "default" else "" }}>Default</option>
-      <option value="at-risk" {{ "selected" if selected_filters.state in ["at-risk","atrisk","at_risk"] else "" }}>At Risk</option>
+      <option value="any" {{ "selected" if selected_filters.state == "any" else "" }}>{{ _("Any") }}</option>
+      <option value="locked" {{ "selected" if selected_filters.state == "locked" else "" }}>{{ _("Locked") }}</option>
+      <option value="default" {{ "selected" if selected_filters.state == "default" else "" }}>{{ _("Default") }}</option>
+      <option value="at-risk" {{ "selected" if selected_filters.state in ["at-risk","atrisk","at_risk"] else "" }}>{{ _("At risk") }}</option>
     </select>
   </label>
   <div class="filter-actions">
-    <button class="btn" type="submit">Apply</button>
-    <a class="btn" href="{{ url_for('index') }}">Reset</a>
+    <button class="btn" type="submit">{{ _("Apply") }}</button>
+    <a class="btn" href="{{ url_for('index') }}">{{ _("Reset") }}</a>
   </div>
-  <div class="filter-actions">
-    <small style="color:#666;">Need CSV exports? Use the Control Center ☰.</small>
+  <div class="quick-search-panel" id="quick-search-panel">
+    <label>
+      {{ _("Quick search (track or cup)") }}
+      <input type="search" id="track-search" placeholder="{{ _('e.g. Senda Arcoiris / Rainbow Road') }}">
+    </label>
+    <small>{{ _("Search matches English or Spanish names instantly on this page.") }}</small>
   </div>
 </form>
 
-<div class="totals" style="margin-top:8px;">
-  <label style="display:flex;flex-direction:column;gap:4px;">
-    Quick search (track or cup)
-    <input type="search" id="track-search" placeholder="e.g. Senda Arcoiris / Rainbow Road" style="padding:8px;border-radius:10px;border:1px solid #ccc;">
-  </label>
-  <small style="color:#555;">Search matches English or Spanish names instantly on this page.</small>
+<div class="undo-inline">
+  <form method="post" action="{{ url_for('undo') }}" data-undo-form>
+    <input type="hidden" name="next" value="{{ request.full_path or url_for('index') }}">
+    <button type="submit">↩️ {{ _('Undo last change') }}</button>
+  </form>
 </div>
 
-{% if default_player %}
-  <div class="totals" style="background:#e3f2fd;">
-    Quick updates enabled for <strong>{{ default_player.name }}</strong>. Set a different default in the Players tab.
-  </div>
-{% else %}
-  <div class="totals">
-    Tip: set a default player from the Players tab to unlock the “I won this one” shortcut.
-  </div>
-{% endif %}
-
-<div class="totals">
-  <strong>Tracks owned:</strong>
-  {% if not totals_overall %}
-    —
-  {% else %}
-    <ol style="margin:.2em 0 0 1.2em;padding:0;">
-      {% for pair in totals_overall %}
-        {% set p = pair[0] %}
-        {% set n = pair[1] %}
-        <li style="list-style:none;margin:.1em 0;">
-          {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}.{% endif %}
-          {{ p }}: {{ n }}
-          {% set streak = streaks_by_name.get(p) %}
-          {% if streak and streak.current_win_streak >= 2 %}
-            🔥 {{ streak.current_win_streak }}
-          {% endif %}
-          {% if streak and streak.current_defense_streak >= 2 %}
-            🛡️ {{ streak.current_defense_streak }}
-          {% endif %}
-        </li>
-      {% endfor %}
-    </ol>
-  {% endif %}
-
-  {% set filtering = selected_filters.owner != "all" or selected_filters.cup != "all" or selected_filters.state != "any" %}
-  {% if filtering %}
-    <br>
-    <strong>Filtered tracks owned:</strong>
-    {% if not totals_filtered %}
-      —
-    {% else %}
-      <ol style="margin:.2em 0 0 1.2em;padding:0;">
-        {% for pair in totals_filtered %}
+{% set top_overall = totals_overall[:4] if totals_overall else [] %}
+<div class="leaderboard-deck">
+  <section class="leaderboard-row">
+    <div class="leaderboard-row-header">
+      <h3>{{ _("Tracks owned") }}</h3>
+      <small>{{ _("Overall standings") }}</small>
+    </div>
+    {% if top_overall %}
+      <div class="leaderboard-tiles">
+        {% for pair in top_overall %}
           {% set p = pair[0] %}
           {% set n = pair[1] %}
-          <li style="list-style:none;margin:.1em 0;">
-            {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}.{% endif %}
-            {{ p }}: {{ n }}
-            {% set streak = streaks_by_name.get(p) %}
-            {% if streak and streak.current_win_streak >= 2 %}
-              🔥 {{ streak.current_win_streak }}
+          {% set highlight = player_highlights.get(p) or {} %}
+          {% set last_cap = highlight.get('last_capture') %}
+          {% if last_cap %}
+            {% if current_lang == 'es' %}
+              {% set track_primary = last_cap.track_es %}
+              {% set track_secondary = last_cap.track_en %}
+              {% set cup_primary = last_cap.cup_es %}
+              {% set cup_secondary = last_cap.cup_en %}
+            {% else %}
+              {% set track_primary = last_cap.track_en %}
+              {% set track_secondary = last_cap.track_es %}
+              {% set cup_primary = last_cap.cup_en %}
+              {% set cup_secondary = last_cap.cup_es %}
             {% endif %}
-            {% if streak and streak.current_defense_streak >= 2 %}
-              🛡️ {{ streak.current_defense_streak }}
-            {% endif %}
-          </li>
+          {% else %}
+            {% set track_primary = '' %}
+            {% set track_secondary = '' %}
+            {% set cup_primary = '' %}
+            {% set cup_secondary = '' %}
+          {% endif %}
+          <article
+            class="leaderboard-tile rank-{{ loop.index }}"
+            data-player-card
+            data-player-name="{{ p }}"
+            data-risk-rate="{{ '%.1f'|format(highlight.get('risk_rate')) if highlight.get('risk_rate') is not none else '' }}"
+            data-win-rate="{{ '%.1f'|format(highlight.get('win_rate')) if highlight.get('win_rate') is not none else '' }}"
+            data-tracks-taken="{{ highlight.get('tracks_taken', '') }}"
+            data-win-streak="{{ highlight.get('current_win_streak', '') }}"
+            data-last-track-primary="{{ track_primary }}"
+            data-last-track-secondary="{{ track_secondary }}"
+            data-last-cup-primary="{{ cup_primary }}"
+            data-last-cup-secondary="{{ cup_secondary }}"
+            data-last-date="{{ last_cap.occurred_at if last_cap else '' }}"
+          >
+            <div class="leaderboard-medal">
+              {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}{% endif %}
+            </div>
+            <div class="leaderboard-player">
+              <strong>{{ p }}</strong>
+              <small>{{ _('{count} tracks').format(count=n) }}</small>
+            </div>
+            <div class="leaderboard-streaks">
+              {% set streak = streaks_by_name.get(p) %}
+              {% if streak and streak.current_win_streak >= 2 %}
+                <span class="streak-badge streak-hot">🔥 {{ streak.current_win_streak }}</span>
+              {% endif %}
+              {% if streak and streak.current_defense_streak >= 2 %}
+                <span class="streak-badge streak-shield">🛡️ {{ streak.current_defense_streak }}</span>
+              {% endif %}
+            </div>
+          </article>
         {% endfor %}
-      </ol>
+      </div>
+    {% else %}
+      <p class="leaderboard-empty">{{ _("No tracks yet.") }}</p>
     {% endif %}
+  </section>
+
+  {% if filtering %}
+    {% set top_filtered = totals_filtered[:4] if totals_filtered else [] %}
+    <section class="leaderboard-row secondary">
+      <div class="leaderboard-row-header">
+        <h3>{{ _("Tracks owned") }}</h3>
+        <small>{{ _("Filtered view") }}</small>
+      </div>
+      {% if top_filtered %}
+        <div class="leaderboard-tiles">
+          {% for pair in top_filtered %}
+            {% set p = pair[0] %}
+            {% set n = pair[1] %}
+            {% set highlight = player_highlights.get(p) or {} %}
+            {% set last_cap = highlight.get('last_capture') %}
+            {% if last_cap %}
+              {% if current_lang == 'es' %}
+                {% set track_primary = last_cap.track_es %}
+                {% set track_secondary = last_cap.track_en %}
+                {% set cup_primary = last_cap.cup_es %}
+                {% set cup_secondary = last_cap.cup_en %}
+              {% else %}
+                {% set track_primary = last_cap.track_en %}
+                {% set track_secondary = last_cap.track_es %}
+                {% set cup_primary = last_cap.cup_en %}
+                {% set cup_secondary = last_cap.cup_es %}
+              {% endif %}
+            {% else %}
+              {% set track_primary = '' %}
+              {% set track_secondary = '' %}
+              {% set cup_primary = '' %}
+              {% set cup_secondary = '' %}
+            {% endif %}
+            <article
+              class="leaderboard-tile rank-{{ loop.index }}"
+              data-player-card
+              data-player-name="{{ p }}"
+              data-risk-rate="{{ '%.1f'|format(highlight.get('risk_rate')) if highlight.get('risk_rate') is not none else '' }}"
+              data-win-rate="{{ '%.1f'|format(highlight.get('win_rate')) if highlight.get('win_rate') is not none else '' }}"
+              data-tracks-taken="{{ highlight.get('tracks_taken', '') }}"
+              data-win-streak="{{ highlight.get('current_win_streak', '') }}"
+              data-last-track-primary="{{ track_primary }}"
+              data-last-track-secondary="{{ track_secondary }}"
+              data-last-cup-primary="{{ cup_primary }}"
+              data-last-cup-secondary="{{ cup_secondary }}"
+              data-last-date="{{ last_cap.occurred_at if last_cap else '' }}"
+            >
+              <div class="leaderboard-medal">
+                {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}{% endif %}
+              </div>
+              <div class="leaderboard-player">
+                <strong>{{ p }}</strong>
+                <small>{{ _('{count} tracks').format(count=n) }}</small>
+              </div>
+              <div class="leaderboard-streaks">
+                {% set streak = streaks_by_name.get(p) %}
+                {% if streak and streak.current_win_streak >= 2 %}
+                  <span class="streak-badge streak-hot">🔥 {{ streak.current_win_streak }}</span>
+                {% endif %}
+                {% if streak and streak.current_defense_streak >= 2 %}
+                  <span class="streak-badge streak-shield">🛡️ {{ streak.current_defense_streak }}</span>
+                {% endif %}
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="leaderboard-empty">{{ _("No tracks match these filters.") }}</p>
+      {% endif %}
+    </section>
   {% endif %}
 </div>
 
-{% for cup in standings %}
-  <details class="cup-panel" open>
-    <summary>
-      <div class="cup-logo">
-        {% if cup.logo_src %}
-          <img src="{{ cup.logo_src }}" alt="{{ cup.cup_en }} logo">
-        {% else %}
-          <div class="cup-logo-placeholder">{{ cup.cup_en[0] }}</div>
-        {% endif %}
-      </div>
-      <div>
-        <h2 style="margin:0;">{{ cup.cup_en }} ({{ cup.cup_es }})</h2>
-      </div>
-    </summary>
-    <div class="cup-tracks">
-      {% for t in cup.tracks %}
-        {% set has_art = t.image_src is not none %}
-        <div class="track-card {% if has_art %}has-art{% endif %}" {% if has_art %}style="--track-art: url('{{ t.image_src }}');"{% endif %}>
-          <div class="track-thumb-wrapper">
-            {% if has_art %}
-              <img class="track-thumb" src="{{ t.image_src }}" alt="{{ t.track_en }}">
-            {% else %}
-              <div class="track-thumb-placeholder">{{ t.track_en[0] }}</div>
-            {% endif %}
-          </div>
-          <div class="track-content">
-            <div class="track-names">
-              <strong>{{ t.track_en }}</strong>
-              <small>{{ t.track_es }}</small>
-            </div>
-            <div class="owner-line">
-              Owner: {{ t.owner or "—" }}
-            </div>
-            <div class="track-state">
-              {% if t.state == 1 %}
-                <span class="badge badge-locked">🔒 Locked</span>
-              {% elif t.state == -1 %}
-                <span class="badge badge-risk">⚠️ At risk</span>
-                {% if t.threatened_by %}
-                  <span class="badge badge-hunter">🎯 {{ t.threatened_by }}</span>
-                {% endif %}
-              {% else %}
-                <span class="badge badge-default">Default</span>
-              {% endif %}
-            </div>
-            <div class="track-actions">
-              {% if default_player %}
-                <form method="get" action="{{ url_for('update_result', track_id=t.id) }}" class="inline">
-                  <input type="hidden" name="quick" value="1">
-                  <button class="btn" type="submit">I won this one</button>
-                </form>
-              {% endif %}
-              <a class="btn icon" href="{{ url_for('update_result', track_id=t.id) }}" aria-label="Open edit form for {{ t.track_en }}">✏️</a>
-            </div>
-          </div>
+<div class="cup-controls">
+  <div class="cup-controls-actions">
+    <button class="btn" type="button" data-expand-toggle aria-pressed="false" data-expand-text="{{ _('Expand all') }}" data-collapse-text="{{ _('Minimize all') }}">{{ _("Expand all") }}</button>
+  </div>
+  <div class="cup-grid" data-cup-grid data-filters-active="{{ 'true' if filtering else 'false' }}">
+    {% for cup in standings %}
+      {% set is_dlc = cup.is_dlc %}
+      <button
+        type="button"
+        class="cup-chip {% if is_dlc %}dlc{% endif %}"
+        data-cup-button
+        data-cup-code="{{ cup.cup_code }}"
+        data-cup-index="{{ loop.index0 }}"
+        aria-controls="cup-panel-{{ cup.cup_code }}"
+        aria-expanded="false"
+        aria-pressed="false">
+        <span class="cup-logo cup-chip-logo">
+          {% if cup.logo_src %}
+            <img src="{{ cup.logo_src }}" alt="{{ cup.cup_en }} logo">
+          {% else %}
+            {% set cup_initial = cup.cup_es if current_lang == 'es' else cup.cup_en %}
+            <span class="cup-logo-placeholder">{{ cup_initial[0] }}</span>
+          {% endif %}
+        </span>
+        <span class="cup-chip-label">
+          {% if current_lang == 'es' %}
+            {{ cup.cup_es }}
+          {% else %}
+            {{ cup.cup_en }}
+          {% endif %}
+        </span>
+      </button>
+    {% endfor %}
+  </div>
+</div>
+
+<div data-panel-repo hidden>
+  {% for cup in standings %}
+    {% set is_dlc = cup.is_dlc %}
+    <section
+      class="cup-panel live {% if is_dlc %}dlc{% endif %}"
+      id="cup-panel-{{ cup.cup_code }}"
+      data-cup-panel
+      data-cup-code="{{ cup.cup_code }}"
+      data-cup-label="{{ cup.cup_en }} {{ cup.cup_es }}">
+      <div class="cup-panel-header">
+        <div class="cup-logo">
+          {% if cup.logo_src %}
+            <img src="{{ cup.logo_src }}" alt="{{ cup.cup_en }} logo">
+          {% else %}
+            {% set cup_initial = cup.cup_es if current_lang == 'es' else cup.cup_en %}
+            <div class="cup-logo-placeholder">{{ cup_initial[0] }}</div>
+          {% endif %}
         </div>
-      {% endfor %}
-    </div>
-  </details>
-{% endfor %}
+        <div>
+          {% if current_lang == 'es' %}
+            <h2 class="cup-panel-title">{{ cup.cup_es }}</h2>
+            <small>{{ cup.cup_en }}</small>
+          {% else %}
+            <h2 class="cup-panel-title">{{ cup.cup_en }}</h2>
+            <small>{{ cup.cup_es }}</small>
+          {% endif %}
+        </div>
+      </div>
+      <div class="cup-tracks">
+        {% for t in cup.tracks %}
+          {% set has_art = t.image_src is not none %}
+          <div class="track-card {% if has_art %}has-art{% else %}no-art{% endif %}" {% if has_art %}style="--track-art: url('{{ t.image_src }}');"{% endif %} data-track-card data-edit-url="{{ url_for('update_result', track_id=t.id) }}" tabindex="0" role="button" aria-label="{{ _('Open edit form for {track}').format(track=t.track_en if current_lang == 'en' else t.track_es) }}">
+            <div class="track-thumb-wrapper">
+              {% if has_art %}
+                <img class="track-thumb" src="{{ t.image_src }}" alt="{{ t.track_en }}">
+              {% else %}
+                {% set track_initial = t.track_es if current_lang == 'es' else t.track_en %}
+                <div class="track-thumb-placeholder">{{ track_initial[0] }}</div>
+              {% endif %}
+            </div>
+            <div class="track-content">
+              <div class="track-names">
+                {% if current_lang == 'es' %}
+                  <strong>{{ t.track_es }}</strong>
+                  <small>{{ t.track_en }}</small>
+                {% else %}
+                  <strong>{{ t.track_en }}</strong>
+                  <small>{{ t.track_es }}</small>
+                {% endif %}
+              </div>
+              <div class="owner-line">
+                {{ _("Owner:") }} {{ t.owner or "—" }}
+              </div>
+              <div class="track-state">
+                {% if t.state == 1 %}
+                  <span class="badge badge-locked">🔒 {{ _("Locked") }}</span>
+                {% elif t.state == -1 %}
+                  <span class="badge badge-risk">⚠️ {{ _("At risk") }}</span>
+                  {% if t.threatened_by %}
+                    <span class="badge badge-hunter">🎯 {{ t.threatened_by }}</span>
+                  {% endif %}
+                {% else %}
+                  <span class="badge badge-default">{{ _("Default") }}</span>
+                {% endif %}
+              </div>
+              <div class="track-actions">
+                {% if default_player %}
+                  <form method="get" action="{{ url_for('update_result', track_id=t.id) }}" class="inline">
+                    <input type="hidden" name="quick" value="1">
+                    <button class="btn" type="submit">{{ _("I won this one") }}</button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+</div>
 
 <script>
   document.addEventListener('DOMContentLoaded', () => {
-    const input = document.getElementById('track-search');
-    if (!input) return;
+    const searchInput = document.getElementById('track-search');
+    const quickSearchPanel = document.getElementById('quick-search-panel');
     const cards = Array.from(document.querySelectorAll('.track-card'));
-    const panels = Array.from(document.querySelectorAll('details.cup-panel'));
-    cards.forEach(card => {
-      const cupHeading = card.closest('details.cup-panel')?.querySelector('summary h2')?.innerText || '';
-      card.dataset.searchText = (cupHeading + ' ' + card.innerText).toLowerCase();
+    const grid = document.querySelector('[data-cup-grid]');
+    const panels = Array.from(document.querySelectorAll('[data-cup-panel]'));
+    const buttons = Array.from(document.querySelectorAll('[data-cup-button]'));
+    const expandToggleBtn = document.querySelector('[data-expand-toggle]');
+    const filterToggle = document.querySelector('[data-filter-toggle]');
+    const filterPanel = document.querySelector('[data-filter-panel]');
+    const filterClose = document.querySelector('[data-filter-close]');
+    const filtersActive = grid?.dataset.filtersActive === 'true';
+    const panelMap = new Map(panels.map(panel => [panel.dataset.cupCode, panel]));
+    const buttonMap = new Map(buttons.map(button => [button.dataset.cupCode, button]));
+
+    let multiOpen = false;
+    const expandLabel = expandToggleBtn?.dataset.expandText || 'Expand all';
+    const collapseLabel = expandToggleBtn?.dataset.collapseText || 'Minimize all';
+    const setFilterOpen = (open) => {
+      if (!filterPanel || !filterToggle) return;
+      filterPanel.hidden = !open;
+      filterToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      filterToggle.classList.toggle('active', open);
+    };
+    if (filterPanel && filterPanel.dataset.openDefault === 'true') {
+      setFilterOpen(true);
+    }
+    filterToggle?.addEventListener('click', () => {
+      if (!filterPanel) return;
+      setFilterOpen(filterPanel.hidden);
     });
+    filterClose?.addEventListener('click', () => setFilterOpen(false));
+    if (searchInput) {
+      if ((searchInput.value || '').trim()) {
+        setFilterOpen(true);
+      }
+      searchInput.addEventListener('focus', () => setFilterOpen(true));
+    }
+
+    function updateButtonState(button, open) {
+      button.classList.toggle('active', open);
+      button.setAttribute('aria-pressed', open ? 'true' : 'false');
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    const ensurePanelPlacement = (code) => {
+      if (!grid) return null;
+      const panel = panelMap.get(code);
+      const button = buttonMap.get(code);
+      if (!panel || !button) return panel;
+      const currentButtons = Array.from(grid.querySelectorAll('[data-cup-button]'));
+      const index = currentButtons.indexOf(button);
+      let anchor = button;
+      const rowTop = button.offsetTop;
+      for (let i = index + 1; i < currentButtons.length; i++) {
+        if (currentButtons[i].offsetTop === rowTop) {
+          anchor = currentButtons[i];
+        } else {
+          break;
+        }
+      }
+      if (panel.parentElement !== grid || panel.previousSibling !== anchor) {
+        grid.insertBefore(panel, anchor.nextSibling);
+      }
+      return panel;
+    };
+
+    function setPanelOpen(code, open) {
+      const panel = ensurePanelPlacement(code);
+      const button = buttonMap.get(code);
+      if (!panel || !button) return;
+      panel.classList.toggle('is-open', open);
+      if (!open) {
+        panel.classList.remove('search-open');
+      }
+      updateButtonState(button, open);
+    }
+
+    function closeAllPanels() {
+      panelMap.forEach((_, code) => setPanelOpen(code, false));
+    }
+
+    function openAllPanels() {
+      panelMap.forEach((_, code) => setPanelOpen(code, true));
+    }
+
+    function setMultiOpen(enabled) {
+      multiOpen = enabled;
+      if (expandToggleBtn) {
+        expandToggleBtn.textContent = enabled ? collapseLabel : expandLabel;
+        expandToggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      }
+      if (enabled) {
+        openAllPanels();
+      } else {
+        closeAllPanels();
+      }
+    }
+
+    function handleButtonClick(button) {
+      const code = button.dataset.cupCode;
+      const panel = panelMap.get(code);
+      if (!panel) return;
+      const isOpen = panel.classList.contains('is-open');
+
+      if (multiOpen) {
+        setPanelOpen(code, !isOpen);
+      } else {
+        if (isOpen) {
+          setPanelOpen(code, false);
+        } else {
+          closeAllPanels();
+          setPanelOpen(code, true);
+          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    }
+
+    buttons.forEach(button => {
+      button.addEventListener('click', () => handleButtonClick(button));
+    });
+
+    if (expandToggleBtn) {
+      expandToggleBtn.addEventListener('click', () => {
+        setMultiOpen(!multiOpen);
+      });
+    }
+
+    panels.forEach(panel => {
+      const label = panel.dataset.cupLabel || '';
+      panel.querySelectorAll('.track-card').forEach(card => {
+        card.dataset.searchText = (label + ' ' + card.innerText).toLowerCase();
+      });
+    });
+
     const applyFilter = () => {
-      const term = input.value.trim().toLowerCase();
+      const term = (searchInput?.value || '').trim().toLowerCase();
       cards.forEach(card => {
         const match = !term || card.dataset.searchText.includes(term);
         card.classList.toggle('search-hidden', !match);
       });
       panels.forEach(panel => {
         const visibleTracks = panel.querySelectorAll('.track-card:not(.search-hidden)').length;
+        const button = buttonMap.get(panel.dataset.cupCode);
+        const hasMatch = term && visibleTracks > 0;
+        if (hasMatch) {
+          ensurePanelPlacement(panel.dataset.cupCode);
+        }
         panel.classList.toggle('search-hidden', term && visibleTracks === 0);
+        panel.classList.toggle('search-open', !!hasMatch);
+        if (!term) {
+          panel.classList.remove('search-open');
+        }
+        if (button) {
+          button.classList.toggle('search-match', !!hasMatch);
+        }
       });
     };
-    input.addEventListener('input', applyFilter);
+
+    if (filtersActive) {
+      setMultiOpen(true);
+    } else {
+      setMultiOpen(false);
+    }
+
+    if (searchInput) {
+      searchInput.addEventListener('input', applyFilter);
+    }
+
+    document.querySelectorAll('[data-track-card]').forEach(card => {
+      card.addEventListener('click', (event) => {
+        if (event.target.closest('.track-actions')) return;
+        const url = card.dataset.editUrl;
+        if (url) window.location = url;
+      });
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          if (event.target.closest('.track-actions')) return;
+          event.preventDefault();
+          const url = card.dataset.editUrl;
+          if (url) window.location = url;
+        }
+      });
+    });
+
+    const modal = document.querySelector('[data-player-modal]');
+    const modalOverlay = document.querySelector('[data-player-modal-overlay]');
+    const modalName = document.querySelector('[data-player-modal-name]');
+    const modalRisk = document.querySelector('[data-player-modal-risk]');
+    const modalWin = document.querySelector('[data-player-modal-winrate]');
+    const modalTaken = document.querySelector('[data-player-modal-taken]');
+    const modalStreak = document.querySelector('[data-player-modal-streak]');
+    const modalCaptureTrack = document.querySelector('[data-player-modal-capture-track]');
+    const modalCaptureCup = document.querySelector('[data-player-modal-capture-cup]');
+    const modalCaptureDate = document.querySelector('[data-player-modal-capture-date]');
+
+    const formatPercent = (val) => {
+      if (val === null || val === undefined || val === '') return '—';
+      const num = Number(val);
+      if (Number.isNaN(num)) return '—';
+      return `${num.toFixed(1)}%`;
+    };
+
+    const openPlayerModal = (card) => {
+      if (!modal || !modalOverlay) return;
+      modalName.textContent = card.dataset.playerName || '';
+      modalRisk.textContent = formatPercent(card.dataset.riskRate);
+      modalWin.textContent = formatPercent(card.dataset.winRate);
+      modalTaken.textContent = card.dataset.tracksTaken || '—';
+      modalStreak.textContent = card.dataset.winStreak || '—';
+
+      const trackPrimary = card.dataset.lastTrackPrimary;
+      const trackSecondary = card.dataset.lastTrackSecondary;
+      const cupPrimary = card.dataset.lastCupPrimary;
+      const cupSecondary = card.dataset.lastCupSecondary;
+      const dateStr = card.dataset.lastDate;
+      if (trackPrimary) {
+        const trackText = trackSecondary ? `${trackPrimary} (${trackSecondary})` : trackPrimary;
+        modalCaptureTrack.textContent = trackText;
+        modalCaptureCup.textContent = cupPrimary ? (cupSecondary ? `${cupPrimary} (${cupSecondary})` : cupPrimary) : '';
+        modalCaptureDate.textContent = dateStr || '';
+      } else {
+        modalCaptureTrack.textContent = '{{ _("No capture yet.") }}';
+        modalCaptureCup.textContent = '';
+        modalCaptureDate.textContent = '';
+      }
+
+      modal.removeAttribute('hidden');
+      modalOverlay.removeAttribute('hidden');
+      modal.classList.add('open');
+      modalOverlay.classList.add('open');
+    };
+
+    const closePlayerModal = () => {
+      if (!modal || !modalOverlay) return;
+      modal.classList.remove('open');
+      modalOverlay.classList.remove('open');
+      modal.setAttribute('hidden', 'hidden');
+      modalOverlay.setAttribute('hidden', 'hidden');
+    };
+
+    document.querySelectorAll('[data-player-card]').forEach(card => {
+      card.addEventListener('click', () => openPlayerModal(card));
+    });
+    document.querySelector('[data-player-modal-close]')?.addEventListener('click', closePlayerModal);
+    modalOverlay?.addEventListener('click', closePlayerModal);
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') closePlayerModal();
+    });
+
     applyFilter();
   });
 </script>

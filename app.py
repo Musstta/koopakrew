@@ -5,12 +5,15 @@ import csv
 import io
 import secrets
 import time
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from typing import TypedDict
-from flask import Flask, g, render_template, request, redirect, url_for, abort, flash, make_response, session, jsonify
+from flask import Flask, g, render_template, request, redirect, url_for, abort, flash, make_response, session, jsonify, has_request_context
+from deep_translator import GoogleTranslator
+from i18n import SUPPORTED_LANGUAGES, SPANISH_TRANSLATIONS
 
 DB_PATH = os.environ.get("KOOPAKREW_DB", "koopakrew.db")
 LOCAL_TZ = os.environ.get("KOOPAKREW_TZ", "America/Costa_Rica")
@@ -18,7 +21,9 @@ LOCAL_TZ = os.environ.get("KOOPAKREW_TZ", "America/Costa_Rica")
 app = Flask(__name__)
 app.secret_key = os.environ.get("KOOPAKREW_SECRET", "koopakrew-dev-secret")  # replace in prod
 STATIC_IMAGE_EXTS = ("png", "jpg", "jpeg", "webp", "gif", "svg")
-ONLINE_TIMEOUT_SECONDS = 60
+ONLINE_TIMEOUT_SECONDS = 300
+PRESENCE_FRESH_SECONDS = 90
+PRESENCE_WARMING_SECONDS = 210
 SEASONAL_LOGOS = {
     9: "KoopaKrewPatriot.png",
     10: "KoopaKrewSpooky.png",
@@ -41,6 +46,93 @@ ARCHIVE_ENTRIES = [
         "notes": "Legacy export (track names in Spanish).",
     },
 ]
+
+def get_current_language():
+    if has_request_context():
+        return getattr(g, "current_lang", "en")
+    return "en"
+
+
+translator_cache: dict[tuple[str, str], str] = {}
+google_translator = GoogleTranslator(source="en", target="es")
+PLACEHOLDER_PATTERN = re.compile(r"{([^}]+)}")
+
+
+def _protect_placeholders(text: str):
+    replacements = {}
+
+    def repl(match):
+        key = match.group(1)
+        token = f"__PH_{len(replacements)}__"
+        replacements[token] = "{" + key + "}"
+        return token
+
+    safe_text = PLACEHOLDER_PATTERN.sub(repl, text)
+    return safe_text, replacements
+
+
+def _restore_placeholders(text: str, replacements: dict[str, str]):
+    restored = text
+    for token, original in replacements.items():
+        restored = restored.replace(token, original)
+    return restored
+
+
+def translate_text(text: str):
+    lang = get_current_language()
+    if lang == "es":
+        if not text:
+            return text
+        if text in SPANISH_TRANSLATIONS:
+            return SPANISH_TRANSLATIONS[text]
+        cache_key = (lang, text)
+        cached = translator_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        safe_text, replacements = _protect_placeholders(text)
+        try:
+            translated = google_translator.translate(safe_text)
+        except Exception:
+            translated = text
+        else:
+            translated = _restore_placeholders(translated, replacements)
+        translator_cache[cache_key] = translated
+        return translated
+    return text
+
+
+def flash_message(message: str, category: str, **kwargs):
+    flash(translate_text(message).format(**kwargs), category)
+
+
+def build_lang_url(lang_code):
+    endpoint = request.endpoint or "index"
+    args = request.view_args.copy() if request.view_args else {}
+    query = request.args.to_dict(flat=True)
+    query["lang"] = lang_code
+    args.update(query)
+    try:
+        return url_for(endpoint, **args)
+    except Exception:
+        return url_for("index", lang=lang_code)
+
+
+@app.before_request
+def set_language():
+    lang = request.args.get("lang")
+    if lang in SUPPORTED_LANGUAGES:
+        session["lang"] = lang
+    g.current_lang = session.get("lang", "en")
+
+
+@app.context_processor
+def inject_i18n():
+    return {
+        "_": translate_text,
+        "current_lang": getattr(g, "current_lang", "en"),
+        "supported_languages": SUPPORTED_LANGUAGES,
+        "lang_url": build_lang_url,
+    }
 
 
 class OnlinePing(TypedDict, total=False):
@@ -71,8 +163,6 @@ class PlayerStatsDict(TypedDict):
     hunter_marks: int
     wins_with_hunter_mark: int
     races_played: int
-    challenge_attempts: int
-    challenge_win_rate: float | None
     win_rate: float | None
     current_win_streak: int
     best_win_streak: int
@@ -90,6 +180,15 @@ class TrackPlayerStats:
 
 
 ONLINE_PINGS: dict[str, OnlinePing] = {}
+
+
+def disconnect_presence_token():
+    """Remove the current session's presence token from the tracking map."""
+    token = session.get("presence_token")
+    if not token:
+        return
+    ONLINE_PINGS.pop(token, None)
+    session.pop("presence_token", None)
 
 
 def resolve_asset_path(subdir: str, code: str | None) -> str | None:
@@ -138,7 +237,7 @@ def _purge_presence(now: float | None = None):
         ONLINE_PINGS.pop(token, None)
 
 
-def _online_player_ids():
+def _online_player_meta():
     _purge_presence()
     last_seen_by_player: dict[int, float] = {}
     for payload in ONLINE_PINGS.values():
@@ -150,13 +249,14 @@ def _online_player_ids():
         if prev is None or stamp > prev:
             last_seen_by_player[pid] = stamp
     ordered = sorted(last_seen_by_player.items(), key=lambda item: (-item[1], item[0]))
-    return [pid for pid, _ in ordered]
+    return ordered
 
 
 def get_online_players(db):
-    ids = _online_player_ids()
-    if not ids:
+    meta = _online_player_meta()
+    if not meta:
         return []
+    ids = [pid for pid, _ in meta]
     qmarks = ",".join("?" for _ in ids)
     rows = db.execute(
         f"SELECT id, name FROM players WHERE id IN ({qmarks})",
@@ -166,9 +266,40 @@ def get_online_players(db):
     return [names[pid] for pid in ids if pid in names]
 
 
+def get_online_presence(db):
+    meta = _online_player_meta()
+    if not meta:
+        return []
+    ids = [pid for pid, _ in meta]
+    qmarks = ",".join("?" for _ in ids)
+    rows = db.execute(
+        f"SELECT id, name FROM players WHERE id IN ({qmarks})",
+        ids,
+    ).fetchall()
+    names = {r["id"]: r["name"] for r in rows}
+    now = time.time()
+    presence = []
+    for pid, stamp in meta:
+        name = names.get(pid)
+        if not name:
+            continue
+        age = now - stamp
+        if age >= ONLINE_TIMEOUT_SECONDS:
+            continue
+        if age < PRESENCE_FRESH_SECONDS:
+            status = "fresh"
+        elif age < PRESENCE_WARMING_SECONDS:
+            status = "warming"
+        else:
+            status = "cooling"
+        presence.append({"name": name, "status": status})
+    return presence
+
+
 def render_page(template_name: str, db, **context):
     context.setdefault("default_player", get_default_player(db))
     context.setdefault("online_players", get_online_players(db))
+    context.setdefault("online_presence", get_online_presence(db))
     context.setdefault("hero_logo_filename", get_current_logo_filename())
     context.setdefault("streak_badges", {})
     context.setdefault("streaks_by_name", {})
@@ -181,12 +312,11 @@ def render_page(template_name: str, db, **context):
 METRIC_DEFS = [
     {"id": "tracks_owned", "label": "Tracks", "type": "value", "value_key": "tracks_owned", "group": "control", "sort_mode": "value", "help": "Tracks currently controlled."},
     {"id": "locked_tracks", "label": "Locked", "type": "value", "value_key": "locked_tracks", "group": "control", "sort_mode": "value", "help": "Owned tracks that are locked."},
-    {"id": "races_played", "label": "Races", "type": "value", "value_key": "races_played", "group": "performance", "sort_mode": "value", "help": "Total races involved in (as owner or winner)."},
+    {"id": "races_played", "label": "Tracked races", "type": "value", "value_key": "races_played", "group": "performance", "sort_mode": "value", "help": "Races where the system recorded you as owner or winner."},
     {"id": "wins", "label": "Wins", "type": "value", "value_key": "wins", "group": "performance", "sort_mode": "value", "help": "Total race wins."},
-    {"id": "win_rate", "label": "Win %", "type": "percent", "value_key": "win_rate", "group": "performance", "sort_mode": "value", "help": "Wins divided by races."},
+    {"id": "win_rate", "label": "Win %", "type": "percent", "value_key": "win_rate", "group": "performance", "sort_mode": "value", "help": "Recorded wins divided by tracked races (owner/winner only)."},
     {"id": "wins_as_owner", "label": "Owner wins", "type": "value", "value_key": "wins_as_owner", "group": "performance", "sort_mode": "value", "help": "Wins while already owning the track."},
     {"id": "wins_as_non_owner", "label": "Challenger wins", "type": "value", "value_key": "wins_as_non_owner", "group": "performance", "sort_mode": "value", "help": "Wins taken as challenger."},
-    {"id": "challenge_win_rate", "label": "Challenger %", "type": "percent", "value_key": "challenge_win_rate", "group": "performance", "sort_mode": "value", "help": "Challenger wins divided by challenger attempts."},
     {"id": "sweeps", "label": "Cup sweeps", "type": "value", "value_key": "sweeps", "group": "performance", "sort_mode": "value", "help": "Total cup sweeps triggered."},
     {"id": "tracks_taken", "label": "Tracks taken", "type": "value", "value_key": "tracks_taken", "group": "performance", "sort_mode": "value", "help": "Tracks gained from others."},
     {"id": "tracks_lost", "label": "Tracks lost", "type": "value", "value_key": "tracks_lost", "group": "performance", "sort_mode": "value", "help": "Tracks lost to challengers."},
@@ -383,7 +513,7 @@ def deactivate_player(db, player_id: int) -> bool:
     return True
 
 
-def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=None):
+def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=None, active_players_only=False):
     if isinstance(season_ids, int):
         season_ids = [season_ids]
     season_ids = [sid for sid in season_ids if sid is not None]
@@ -403,9 +533,13 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
     season_clause = ",".join("?" for _ in season_ids)
     allow_track_insights = len(season_ids) == 1
     player_rows = db.execute(
-        "SELECT id, name FROM players ORDER BY name"
+        "SELECT id, name, active FROM players ORDER BY name"
     ).fetchall()
-    player_names = {r["id"]: r["name"] for r in player_rows}
+    player_meta = {
+        r["id"]: {"name": r["name"], "active": bool(r["active"])}
+        for r in player_rows
+    }
+    player_names = {pid: meta["name"] for pid, meta in player_meta.items()}
 
     def make_empty_player_stats(pid: int, name: str) -> PlayerStatsDict:
         return {
@@ -431,8 +565,6 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             "hunter_marks": 0,
             "wins_with_hunter_mark": 0,
             "races_played": 0,
-            "challenge_attempts": 0,
-            "challenge_win_rate": None,
             "win_rate": None,
             "current_win_streak": 0,
             "best_win_streak": 0,
@@ -446,7 +578,11 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
         if pid is None:
             return None
         if pid not in stats:
-            stats[pid] = make_empty_player_stats(pid, player_names.get(pid, f"Player {pid}"))
+            fallback_name = player_names.get(pid, f"Player {pid}")
+            stats[pid] = make_empty_player_stats(pid, fallback_name)
+            if pid not in player_names:
+                player_names[pid] = fallback_name
+            player_meta.setdefault(pid, {"name": fallback_name, "active": True})
         return stats[pid]
 
     track_rows = db.execute(
@@ -604,15 +740,6 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             )
         else:
             ps["defense_at_risk_rate"] = None
-        challenger_attempts = max(ps["races_played"] - ps["races_as_owner"], 0)
-        ps["challenge_attempts"] = challenger_attempts
-        if challenger_attempts > 0:
-            ps["challenge_win_rate"] = (
-                ps["wins_as_non_owner"] / challenger_attempts * 100.0
-            )
-        else:
-            ps["challenge_win_rate"] = None
-
         if ps["races_played"] > 0:
             ps["win_rate"] = ps["wins"] / ps["races_played"] * 100.0
         else:
@@ -639,6 +766,12 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             s["name"].lower(),
         ),
     )
+
+    if active_players_only:
+        player_stats = [
+            ps for ps in player_stats
+            if player_meta.get(ps["id"], {}).get("active", True)
+        ]
 
     track_activity = []
     for tid, count in track_race_count.items():
@@ -826,6 +959,55 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
         "streak_badges": streak_badges,
         "track_insights_enabled": allow_track_insights,
     }
+
+
+def build_player_highlights(db, season_id):
+    stats_payload = compute_stats_data(db, [season_id], "wins", None)
+    highlights: dict[str, dict[str, object]] = {}
+    for ps in stats_payload.get("player_stats", []):
+        highlights[ps["name"]] = {
+            "risk_rate": ps.get("defense_at_risk_rate"),
+            "win_rate": ps.get("win_rate"),
+            "tracks_taken": ps.get("tracks_taken"),
+            "current_win_streak": ps.get("current_win_streak"),
+        }
+
+    capture_rows = db.execute(
+        """
+        SELECT
+            pw.name AS winner_name,
+            t.en AS track_en,
+            t.es AS track_es,
+            c.en AS cup_en,
+            c.es AS cup_es,
+            e.occurred_at
+        FROM events e
+        JOIN tracks t ON t.id = e.track_id
+        JOIN cups c ON c.id = t.cup_id
+        LEFT JOIN players pw ON pw.id = e.winner_id
+        WHERE t.season = ? AND e.is_sweep = 0
+          AND e.pre_owner_id IS NOT NULL
+          AND e.pre_owner_id != e.winner_id
+        ORDER BY e.occurred_at DESC, e.id DESC
+        """,
+        (season_id,),
+    ).fetchall()
+
+    for row in capture_rows:
+        name = row["winner_name"]
+        if not name:
+            continue
+        info = highlights.setdefault(name, {})
+        if "last_capture" in info:
+            continue
+        info["last_capture"] = {
+            "track_en": row["track_en"],
+            "track_es": row["track_es"],
+            "cup_en": row["cup_en"],
+            "cup_es": row["cup_es"],
+            "occurred_at": row["occurred_at"],
+        }
+    return highlights
 
 
 def build_csv_archive(entry):
@@ -1433,6 +1615,11 @@ def index():
                                 cup_code=cup_f,
                                 state_filter=state_f)
     decorate_standings_with_art(standings)
+    dlc_started = False
+    for cup in standings:
+        if not dlc_started and cup["cup_en"] == "Golden Dash Cup":
+            dlc_started = True
+        cup["is_dlc"] = dlc_started
 
     # Totals (overall, not filtered) and sort for medals
     totals_overall = fetch_totals_overall(db, season_id)  # list of (owner, n)
@@ -1443,12 +1630,14 @@ def index():
     # medals mapping by index
     medals = ["🥇", "🥈", "🥉"]
 
-    players = [p["name"] for p in fetch_players(db)]
+    player_options = fetch_players(db)
+    players = [p["name"] for p in player_options]
     cups = fetch_cups_for_season(db, season_id)
 
     default_player = get_default_player(db)
     streak_entries = compute_player_streaks(db, season_id)
     streaks_by_name = {info["name"]: info for info in streak_entries.values()}
+    player_highlights = build_player_highlights(db, season_id)
 
     return render_page(
         "index.html",
@@ -1458,11 +1647,13 @@ def index():
         totals_filtered=totals_filtered,
         medals=medals,
         players=players,
+        player_options=player_options,
         cups=cups,
         selected_filters={"owner": owner_f, "cup": cup_f, "state": state_f},
         season_label=season_label,
         default_player=default_player,
         streaks_by_name=streaks_by_name,
+        player_highlights=player_highlights,
         page_title="Koopa Krew - Standings",
     )
 
@@ -1514,14 +1705,14 @@ def update_result(track_id):
         # lookup winner_id
         row = db.execute("SELECT id FROM players WHERE name = ? AND active = 1", (winner_name,)).fetchone()
         if not row:
-            flash("Unknown player", "error")
+            flash_message("Unknown player", "error")
             return redirect(url_for("update_result", track_id=track_id))
 
         try:
             apply_result(db, season_id, track_id, row["id"])
-            flash("Result saved.", "success")
+            flash_message("Result saved.", "success")
         except Exception as e:
-            flash(f"Error saving result: {e}", "error")
+            flash_message("Error saving result: {error}", "error", error=e)
         return redirect(url_for("index"))
 
     # GET
@@ -1539,15 +1730,17 @@ def update_result(track_id):
         recent_events=recent_events
     )
 
-
 @app.route("/undo", methods=["POST"])
 def undo():
     db = get_db()
     ok = undo_last_event(db)
     if ok:
-        flash("Last change undone.", "success")
+        flash_message("Last change undone.", "success")
     else:
-        flash("Nothing to undo.", "info")
+        flash_message("Nothing to undo.", "info")
+    next_url = request.form.get("next")
+    if next_url:
+        return redirect(next_url)
     return redirect(url_for("index"))
 
 @app.route("/events")
@@ -1937,7 +2130,19 @@ def stats_page():
     if not selected_option and season_meta_rows:
         selected_option = str(season_meta_rows[0]["id"])
 
-    stats_data = compute_stats_data(db, selected_ids, sort_metric_id, track_param)
+    restrict_active_players = False
+    if selected_option != "all" and len(selected_ids) == 1:
+        current_row = get_current_season_row(db)
+        if current_row and current_row["id"] == selected_ids[0]:
+            restrict_active_players = True
+
+    stats_data = compute_stats_data(
+        db,
+        selected_ids,
+        sort_metric_id,
+        track_param,
+        active_players_only=restrict_active_players,
+    )
 
     return render_page(
         "stats.html",
@@ -2006,48 +2211,48 @@ def admin_players():
         if action == "add":
             name = (request.form.get("name") or "").strip()
             if not name:
-                flash("Name is required.", "error")
+                flash_message("Name is required.", "error")
             else:
                 try:
                     db.execute("INSERT INTO players (name, active) VALUES (?, 1)", (name,))
                     db.commit()
-                    flash(f"Added player {name}.", "success")
+                    flash_message("Added player {name}.", "success", name=name)
                 except sqlite3.IntegrityError:
-                    flash("That name already exists.", "error")
+                    flash_message("That name already exists.", "error")
         elif action == "rename":
             player_id = request.form.get("player_id", type=int)
             if player_id is None:
-                flash("Invalid player id.", "error")
+                flash_message("Invalid player id.", "error")
                 return redirect(url_for("admin_players"))
             name = (request.form.get("name") or "").strip()
             if not name:
-                flash("Name is required.", "error")
+                flash_message("Name is required.", "error")
             else:
                 try:
                     db.execute("UPDATE players SET name = ? WHERE id = ?", (name, player_id))
                     db.commit()
-                    flash("Name updated.", "success")
+                    flash_message("Name updated.", "success")
                 except sqlite3.IntegrityError:
-                    flash("That name already exists.", "error")
+                    flash_message("That name already exists.", "error")
         elif action == "toggle":
             player_id = request.form.get("player_id", type=int)
             if player_id is None:
-                flash("Invalid player id.", "error")
+                flash_message("Invalid player id.", "error")
             else:
                 row = db.execute("SELECT active FROM players WHERE id = ?", (player_id,)).fetchone()
                 if not row:
-                    flash("Player not found.", "error")
+                    flash_message("Player not found.", "error")
                 elif row["active"] == 1:
                     if deactivate_player(db, player_id):
-                        flash("Player deactivated and tracks cleared.", "success")
+                        flash_message("Player deactivated and tracks cleared.", "success")
                     else:
-                        flash("Player could not be deactivated.", "error")
+                        flash_message("Player could not be deactivated.", "error")
                 else:
                     db.execute("UPDATE players SET active = 1 WHERE id = ?", (player_id,))
                     db.commit()
-                    flash("Player reactivated.", "success")
+                    flash_message("Player reactivated.", "success")
         else:
-            flash("Unknown action.", "error")
+            flash_message("Unknown action.", "error")
         return redirect(url_for("admin_players"))
 
     players = fetch_all_players(db)
@@ -2069,25 +2274,32 @@ def admin_players():
 def set_default_player():
     db = get_db()
     player_id = request.form.get("player_id", type=int)
+    previous_default = session.get("default_player_id")
     row = db.execute(
         "SELECT id, name, active FROM players WHERE id = ?",
         (player_id,),
     ).fetchone()
     if not row:
-        flash("Player not found.", "error")
+        flash_message("Player not found.", "error")
     elif not row["active"]:
-        flash("Activate the player before setting as default.", "error")
+        flash_message("Activate the player before setting as default.", "error")
     else:
+        if previous_default != row["id"]:
+            disconnect_presence_token()
         session["default_player_id"] = row["id"]
-        flash(f"{row['name']} is now your default player.", "success")
+        flash_message("{name} is now your default player.", "success", name=row["name"])
     show_mode = request.form.get("show_mode")
+    next_view = request.form.get("next")
+    if next_view == "index":
+        return redirect(url_for("index"))
     return redirect(url_for("admin_players", show=show_mode) if show_mode else url_for("admin_players"))
 
 
 @app.route("/admin/players/clear-default", methods=["POST"])
 def clear_default_player():
+    disconnect_presence_token()
     session.pop("default_player_id", None)
-    flash("Cleared your default player.", "info")
+    flash_message("Cleared your default player.", "info")
     show_mode = request.form.get("show_mode")
     return redirect(url_for("admin_players", show=show_mode) if show_mode else url_for("admin_players"))
 
@@ -2098,9 +2310,7 @@ def presence_ping():
     default_player = get_default_player(db)
     token = session.get("presence_token")
     if not default_player:
-        if token:
-            ONLINE_PINGS.pop(token, None)
-            session.pop("presence_token", None)
+        disconnect_presence_token()
         return jsonify({"status": "ignored"})
     if not token:
         token = secrets.token_hex(16)
