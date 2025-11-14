@@ -1,15 +1,10 @@
 {% extends "base.html" %}
+{% set season_param = request.args.get('season') %}
 {% block body %}
 
-<h2>Event Log</h2>
-
-{% set season_param = request.args.get('season') %}
-<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
   <a class="btn" href="{{ url_for('index', season=season_param) }}">Back to standings</a>
-  <div style="font-size:0.85em;color:#555;text-align:right;">
-    Debug export:
-    <a href="{{ url_for('export_events', season=season_param) }}">Events CSV</a>
-  </div>
+  <small style="color:#666;">CSV exports live in the Control Center ☰.</small>
 </div>
 
 <form method="get" action="{{ url_for('events_log') }}" class="filter-form" style="margin-bottom:12px;">
@@ -72,7 +67,7 @@
       </a>
     {% endif %}
   </div>
-</form>
+  </form>
 
 <p style="font-size:0.9em;color:#555;margin-top:-4px;">
   Showing {{ events|length }} event{{ events|length != 1 and 's' or '' }} for {{ season_label }}.

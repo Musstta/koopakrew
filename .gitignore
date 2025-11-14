@@ -1,3 +1,6 @@
 /.venv
 /MK8TracksS2.csv
 /koopakrew.db
+.vscode/settings.json
+__pycache__/
+*.pyc

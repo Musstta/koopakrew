@@ -3,8 +3,7 @@
 
 <h2>Season stats</h2>
 
-<h3>Per-player overview</h3>
-<form method="get" class="filter-form" style="max-width:360px;margin-bottom:12px;">
+<form method="get" class="filter-form" style="max-width:480px;margin-bottom:12px;">
   <label>
     Sort players by
     <select name="sort">
@@ -15,11 +14,60 @@
       {% endfor %}
     </select>
   </label>
+  <label>
+    Season
+    <select name="season">
+      {% for option in season_options %}
+        <option value="{{ option.id }}" {% if option.id == selected_season %}selected{% endif %}>
+          {{ option.label }}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
   {% if selected_track %}
     <input type="hidden" name="track_id" value="{{ selected_track.id }}">
   {% endif %}
   <button class="btn" type="submit">Update</button>
+  <div class="filter-actions">
+    <small style="color:#666;">Need exports? Use the Control Center ☰.</small>
+  </div>
 </form>
+{% if track_insights_enabled %}
+  <form method="get" action="{{ url_for('stats_page') }}" style="margin-bottom:12px;">
+    <label for="track_id">Choose a track:</label>
+    <select name="track_id" id="track_id">
+      {% for t in track_selector %}
+        <option value="{{ t.id }}"
+          {% if selected_track and selected_track.id == t.id %}selected{% endif %}>
+          {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
+        </option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit" style="margin-left:8px;">View</button>
+    {% if selected_sort %}
+      <input type="hidden" name="sort" value="{{ selected_sort }}">
+    {% endif %}
+    {% if selected_season %}
+      <input type="hidden" name="season" value="{{ selected_season }}">
+    {% endif %}
+  </form>
+{% else %}
+  <p class="event-detail">Track insights are only available when viewing a single season.</p>
+{% endif %}
+
+{% set badge_hot = streak_badges.hot_hand if streak_badges else None %}
+{% set badge_def = streak_badges.shield_wall if streak_badges else None %}
+{% if badge_hot or badge_def %}
+  <div class="totals" style="background:#fff3e0;">
+    {% if badge_hot %}
+      🔥 <strong>Hot hand:</strong> {{ badge_hot.player }} ({{ badge_hot.streak }} wins)
+    {% endif %}
+    {% if badge_hot and badge_def %}<br>{% endif %}
+    {% if badge_def %}
+      🛡️ <strong>Shield wall:</strong> {{ badge_def.player }} ({{ badge_def.streak }} defenses)
+    {% endif %}
+  </div>
+{% endif %}
 
 <div class="table-scroll">
   <table class="stats-table">
@@ -32,23 +80,24 @@
       </tr>
     </thead>
     <tbody>
-      {% for metric in metric_rows %}
-        <tr class="metric-group-{{ metric.group }}">
-          <td class="metric-name">
+        {% for metric in metric_rows %}
+          <tr class="metric-group-{{ metric.group }}">
+            <td class="metric-name">
             {{ metric.label }}
             {% if metric.help %}
               <button type="button" class="info-tip"></button>
               <span class="info-text">{{ metric.help }}</span>
             {% endif %}
           </td>
-          {% for cell in metric.cells %}
-            {% set highlight = metric.max_highlight is not none and cell.highlight == metric.max_highlight %}
-            <td class="{% if highlight %}top-value{% endif %}" style="text-align:right;">
-              {% if metric.type == "value" %}
-                {{ cell.value }}
-              {% elif metric.type == "pair" %}
-                {{ cell.num }} / {{ cell.den }}
-              {% elif metric.type == "percent" %}
+            {% for cell in metric.cells %}
+              {% set highlight = metric.max_highlight is not none and cell.highlight == metric.max_highlight %}
+              <td class="{% if highlight %}top-value{% endif %}" style="text-align:right;">
+                {% if highlight %}👑 {% endif %}
+                {% if metric.type == "value" %}
+                  {{ cell.value }}
+                {% elif metric.type == "pair" %}
+                  {{ cell.num }} / {{ cell.den }}
+                {% elif metric.type == "percent" %}
                 {% if cell.percent is not none %}
                   {{ "%.1f"|format(cell.percent) }}%
                 {% else %}
@@ -121,19 +170,6 @@
 
 <h3>Track insights</h3>
 
-<form method="get" action="{{ url_for('stats_page') }}" style="margin-bottom:8px;">
-  <label for="track_id">Choose a track:</label>
-  <select name="track_id" id="track_id">
-    {% for t in track_selector %}
-      <option value="{{ t.id }}"
-        {% if selected_track and selected_track.id == t.id %}selected{% endif %}>
-        {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
-      </option>
-    {% endfor %}
-  </select>
-  <button class="btn" type="submit">View</button>
-</form>
-
 {% if selected_track %}
   <h4>
     {{ selected_track.en }} ({{ selected_track.es }}) —
@@ -164,6 +200,10 @@
         {% endfor %}
       </tbody>
     </table>
+    {% set track_master = track_player_stats[0] if track_player_stats else None %}
+    {% if track_master %}
+      <p><strong>🏁 Track master:</strong> {{ track_master.name }} ({{ track_master.wins }} wins)</p>
+    {% endif %}
   {% else %}
     <p>No races have been recorded on this track yet.</p>
   {% endif %}

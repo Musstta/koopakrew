@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """List cup and track images that are missing local files."""
 import sqlite3
-import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

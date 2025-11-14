@@ -3,10 +3,14 @@ import json
 import sqlite3
 import csv
 import io
+import secrets
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
-from flask import Flask, g, render_template, request, redirect, url_for, abort, flash, make_response, session
+from typing import TypedDict
+from flask import Flask, g, render_template, request, redirect, url_for, abort, flash, make_response, session, jsonify
 
 DB_PATH = os.environ.get("KOOPAKREW_DB", "koopakrew.db")
 LOCAL_TZ = os.environ.get("KOOPAKREW_TZ", "America/Costa_Rica")
@@ -14,6 +18,78 @@ LOCAL_TZ = os.environ.get("KOOPAKREW_TZ", "America/Costa_Rica")
 app = Flask(__name__)
 app.secret_key = os.environ.get("KOOPAKREW_SECRET", "koopakrew-dev-secret")  # replace in prod
 STATIC_IMAGE_EXTS = ("png", "jpg", "jpeg", "webp", "gif", "svg")
+ONLINE_TIMEOUT_SECONDS = 60
+SEASONAL_LOGOS = {
+    9: "KoopaKrewPatriot.png",
+    10: "KoopaKrewSpooky.png",
+    12: "KoopaKrewXmas.png",
+}
+
+ARCHIVE_ENTRIES = [
+    {
+        "id": "season2",
+        "label": "Season 2 — 2025 Q4",
+        "type": "db",
+        "season_label": "Season 2 — 2025 Q4",
+        "notes": "Live data snapshot pulled from the Koopa Krew database.",
+    },
+    {
+        "id": "season1",
+        "label": "Season 1 — 2025 Q3",
+        "type": "csv",
+        "file": "MK8TracksSeason1.csv",
+        "notes": "Legacy export (track names in Spanish).",
+    },
+]
+
+
+class OnlinePing(TypedDict, total=False):
+    player_id: int
+    last_seen: float
+
+
+class PlayerStatsDict(TypedDict):
+    id: int
+    name: str
+    tracks_owned: int
+    locked_tracks: int
+    wins: int
+    wins_as_owner: int
+    wins_as_non_owner: int
+    sweeps: int
+    tracks_taken: int
+    tracks_lost: int
+    net_tracks: int
+    races_as_owner: int
+    defense_successes: int
+    defense_success_rate: float | None
+    defense_at_risk_attempts: int
+    defense_at_risk_successes: int
+    defense_at_risk_rate: float | None
+    wins_on_risk: int
+    steals_from_risk: int
+    hunter_marks: int
+    wins_with_hunter_mark: int
+    races_played: int
+    challenge_attempts: int
+    challenge_win_rate: float | None
+    win_rate: float | None
+    current_win_streak: int
+    best_win_streak: int
+    current_defense_streak: int
+    best_defense_streak: int
+
+
+@dataclass
+class TrackPlayerStats:
+    name: str = ""
+    wins: int = 0
+    defenses: int = 0
+    takes: int = 0
+    losses: int = 0
+
+
+ONLINE_PINGS: dict[str, OnlinePing] = {}
 
 
 def resolve_asset_path(subdir: str, code: str | None) -> str | None:
@@ -48,6 +124,58 @@ def track_image_url(track_dict):
     if local:
         return url_for("static", filename=local)
     return None
+
+
+def _purge_presence(now: float | None = None):
+    """Drop stale presence tokens so 'online players' represent recent visits."""
+    now = now or time.time()
+    stale = [
+        token
+        for token, payload in ONLINE_PINGS.items()
+        if now - payload.get("last_seen", 0) > ONLINE_TIMEOUT_SECONDS
+    ]
+    for token in stale:
+        ONLINE_PINGS.pop(token, None)
+
+
+def _online_player_ids():
+    _purge_presence()
+    last_seen_by_player: dict[int, float] = {}
+    for payload in ONLINE_PINGS.values():
+        pid = payload.get("player_id")
+        if not pid:
+            continue
+        stamp = payload.get("last_seen", 0.0)
+        prev = last_seen_by_player.get(pid)
+        if prev is None or stamp > prev:
+            last_seen_by_player[pid] = stamp
+    ordered = sorted(last_seen_by_player.items(), key=lambda item: (-item[1], item[0]))
+    return [pid for pid, _ in ordered]
+
+
+def get_online_players(db):
+    ids = _online_player_ids()
+    if not ids:
+        return []
+    qmarks = ",".join("?" for _ in ids)
+    rows = db.execute(
+        f"SELECT id, name FROM players WHERE id IN ({qmarks})",
+        ids,
+    ).fetchall()
+    names = {r["id"]: r["name"] for r in rows}
+    return [names[pid] for pid in ids if pid in names]
+
+
+def render_page(template_name: str, db, **context):
+    context.setdefault("default_player", get_default_player(db))
+    context.setdefault("online_players", get_online_players(db))
+    context.setdefault("hero_logo_filename", get_current_logo_filename())
+    context.setdefault("streak_badges", {})
+    context.setdefault("streaks_by_name", {})
+    if "page_title" not in context:
+        season_label = context.get("season_label", "Koopa Krew")
+        context["page_title"] = f"Koopa Krew — {season_label}"
+    return render_template(template_name, **context)
 
 
 METRIC_DEFS = [
@@ -119,6 +247,651 @@ def close_db(exception):
 def current_local_date():
     tz = ZoneInfo(LOCAL_TZ)
     return datetime.now(tz).date()
+
+
+def get_current_logo_filename() -> str:
+    today = current_local_date()
+    return SEASONAL_LOGOS.get(today.month, "KoopaKrew.png")
+
+
+def load_archive_rows(path: str) -> list[list[str]]:
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        rows = [row for row in reader if any(cell.strip() for cell in row)]
+    return rows
+
+
+def load_legacy_archive_data(path: str):
+    if not os.path.exists(path):
+        return {"cups": [], "totals": []}
+    cups = defaultdict(list)
+    totals = defaultdict(int)
+    with open(path, "r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            cup = (row.get("Pistas") or "Cup").strip()
+            track = (row.get("Circuto") or "").strip()
+            owner = (row.get("Dueño") or "").strip()
+            state = (row.get("Seguro - Peligro") or "").strip()
+            if not track:
+                continue
+            cups[cup].append({"track": track, "owner": owner, "state": state})
+            if owner:
+                totals[owner] += 1
+    ordered_cups = [
+        {"cup_name": cup, "tracks": tracks}
+        for cup, tracks in sorted(cups.items(), key=lambda item: item[0])
+    ]
+    totals_list = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    return {"cups": ordered_cups, "totals": totals_list}
+
+
+def compute_player_streaks(db, season_id):
+    player_rows = db.execute("SELECT id, name FROM players").fetchall()
+    names = {r["id"]: r["name"] for r in player_rows}
+
+    def make_entry(pid):
+        return {
+            "name": names.get(pid, f"Player {pid}"),
+            "current_win_streak": 0,
+            "current_defense_streak": 0,
+        }
+
+    streaks: dict[int, dict[str, int | str]] = {}
+
+    def ensure(pid):
+        if pid is None:
+            return None
+        if pid not in streaks:
+            streaks[pid] = make_entry(pid)
+        return streaks[pid]
+
+    event_rows = db.execute(
+        """
+        SELECT e.*
+        FROM events e
+        JOIN tracks t ON t.id = e.track_id
+        WHERE t.season = ? AND e.is_sweep = 0
+        ORDER BY e.occurred_at ASC, e.id ASC
+        """,
+        (season_id,),
+    ).fetchall()
+
+    for e in event_rows:
+        winner_stats = ensure(e["winner_id"])
+        pre_owner_stats = ensure(e["pre_owner_id"])
+
+        if winner_stats:
+            winner_stats["current_win_streak"] += 1
+
+        if pre_owner_stats and e["pre_owner_id"] and e["pre_owner_id"] != e["winner_id"]:
+            pre_owner_stats["current_win_streak"] = 0
+            pre_owner_stats["current_defense_streak"] = 0
+
+        if (
+            pre_owner_stats
+            and e["pre_owner_id"]
+            and e["winner_id"] == e["pre_owner_id"]
+            and e["post_owner_id"] == e["pre_owner_id"]
+        ):
+            pre_owner_stats["current_defense_streak"] += 1
+
+    return streaks
+
+
+def deactivate_player(db, player_id: int) -> bool:
+    row = db.execute("SELECT id, name, active FROM players WHERE id = ?", (player_id,)).fetchone()
+    if not row or row["active"] == 0:
+        return False
+    track_rows = db.execute(
+        "SELECT id, state, threatened_by_id FROM tracks WHERE owner_id = ?",
+        (player_id,),
+    ).fetchall()
+    payload = {
+        "action": "deactivate_player",
+        "player_id": player_id,
+        "tracks": [
+            {
+                "track_id": tr["id"],
+                "pre_owner_id": player_id,
+                "pre_state": tr["state"],
+                "pre_threatened_by_id": tr["threatened_by_id"],
+            }
+            for tr in track_rows
+        ],
+    }
+    occurred_at = datetime.now(ZoneInfo(LOCAL_TZ)).isoformat(timespec="seconds")
+    db.execute(
+        """
+        INSERT INTO events
+          (track_id, winner_id, occurred_at,
+           pre_owner_id, pre_state, pre_threatened_by_id,
+           post_owner_id, post_state, post_threatened_by_id,
+           side_effects_json, is_sweep, sweep_cup_id, sweep_owner_id)
+        VALUES (NULL, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, 0, NULL, NULL)
+        """,
+        (player_id, occurred_at, json.dumps(payload)),
+    )
+    db.execute(
+        "UPDATE tracks SET owner_id = NULL, state = 0, threatened_by_id = NULL WHERE owner_id = ?",
+        (player_id,),
+    )
+    db.execute("UPDATE players SET active = 0 WHERE id = ?", (player_id,))
+    db.commit()
+    return True
+
+
+def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=None):
+    if isinstance(season_ids, int):
+        season_ids = [season_ids]
+    season_ids = [sid for sid in season_ids if sid is not None]
+    if not season_ids:
+        return {
+            "player_stats": [],
+            "track_activity": [],
+            "most_defended": None,
+            "most_contested": None,
+            "track_selector": [],
+            "selected_track": None,
+            "track_player_stats": [],
+            "track_events": [],
+            "metric_rows": [],
+            "streak_badges": {},
+        }
+    season_clause = ",".join("?" for _ in season_ids)
+    allow_track_insights = len(season_ids) == 1
+    player_rows = db.execute(
+        "SELECT id, name FROM players ORDER BY name"
+    ).fetchall()
+    player_names = {r["id"]: r["name"] for r in player_rows}
+
+    def make_empty_player_stats(pid: int, name: str) -> PlayerStatsDict:
+        return {
+            "id": pid,
+            "name": name,
+            "tracks_owned": 0,
+            "locked_tracks": 0,
+            "wins": 0,
+            "wins_as_owner": 0,
+            "wins_as_non_owner": 0,
+            "sweeps": 0,
+            "tracks_taken": 0,
+            "tracks_lost": 0,
+            "net_tracks": 0,
+            "races_as_owner": 0,
+            "defense_successes": 0,
+            "defense_success_rate": None,
+            "defense_at_risk_attempts": 0,
+            "defense_at_risk_successes": 0,
+            "defense_at_risk_rate": None,
+            "wins_on_risk": 0,
+            "steals_from_risk": 0,
+            "hunter_marks": 0,
+            "wins_with_hunter_mark": 0,
+            "races_played": 0,
+            "challenge_attempts": 0,
+            "challenge_win_rate": None,
+            "win_rate": None,
+            "current_win_streak": 0,
+            "best_win_streak": 0,
+            "current_defense_streak": 0,
+            "best_defense_streak": 0,
+        }
+
+    stats = {pid: make_empty_player_stats(pid, name) for pid, name in player_names.items()}
+
+    def ensure_player(pid: int | None):
+        if pid is None:
+            return None
+        if pid not in stats:
+            stats[pid] = make_empty_player_stats(pid, player_names.get(pid, f"Player {pid}"))
+        return stats[pid]
+
+    track_rows = db.execute(
+        f"""
+        SELECT t.id, t.en AS track_en, t.es AS track_es,
+               c.en AS cup_en, c.es AS cup_es,
+               t.owner_id AS final_owner_id,
+               t.state AS final_state,
+               t.season AS season_id
+        FROM tracks t
+        JOIN cups c ON c.id = t.cup_id
+        WHERE t.season IN ({season_clause})
+        """,
+        season_ids,
+    ).fetchall()
+
+    track_info = {}
+    for r in track_rows:
+        tid = r["id"]
+        track_info[tid] = {
+            "track_en": r["track_en"],
+            "track_es": r["track_es"],
+            "cup_en": r["cup_en"],
+            "cup_es": r["cup_es"],
+        }
+
+        owner_id = r["final_owner_id"]
+        state = r["final_state"]
+        if owner_id is not None:
+            ps = ensure_player(owner_id)
+            if ps:
+                ps["tracks_owned"] += 1
+                if state == 1:
+                    ps["locked_tracks"] += 1
+
+    track_race_count = defaultdict(int)
+    track_ownership_changes = defaultdict(int)
+    track_defenses = defaultdict(int)
+
+    sweep_rows = db.execute(
+        f"""
+        SELECT e.sweep_owner_id
+        FROM events e
+        JOIN tracks t ON t.id = e.track_id
+        WHERE t.season IN ({season_clause}) AND e.is_sweep = 1
+        """,
+        season_ids,
+    ).fetchall()
+    for r in sweep_rows:
+        sweeper_id = r["sweep_owner_id"]
+        ps = ensure_player(sweeper_id)
+        if ps:
+            ps["sweeps"] += 1
+
+    event_rows = db.execute(
+        f"""
+        SELECT e.*, t.id AS track_id, t.season AS track_season
+        FROM events e
+        JOIN tracks t ON t.id = e.track_id
+        WHERE t.season IN ({season_clause}) AND e.is_sweep = 0
+        ORDER BY t.season ASC, e.occurred_at ASC, e.id ASC
+        """,
+        season_ids,
+    ).fetchall()
+
+    for e in event_rows:
+        track_id = e["track_id"]
+        winner_id = e["winner_id"]
+        pre_owner_id = e["pre_owner_id"]
+        post_owner_id = e["post_owner_id"]
+        pre_state = e["pre_state"]
+        post_state = e["post_state"]
+        pre_threat = e["pre_threatened_by_id"]
+
+        track_race_count[track_id] += 1
+
+        winner_stats = ensure_player(winner_id)
+        pre_owner_stats = ensure_player(pre_owner_id)
+        post_owner_stats = ensure_player(post_owner_id)
+
+        if winner_stats:
+            winner_stats["wins"] += 1
+            winner_stats["races_played"] += 1
+            if pre_owner_id == winner_id:
+                winner_stats["wins_as_owner"] += 1
+            else:
+                winner_stats["wins_as_non_owner"] += 1
+            winner_stats["current_win_streak"] += 1
+            if winner_stats["current_win_streak"] > winner_stats["best_win_streak"]:
+                winner_stats["best_win_streak"] = winner_stats["current_win_streak"]
+
+        if pre_owner_stats:
+            pre_owner_stats["races_played"] += 1
+            pre_owner_stats["races_as_owner"] += 1
+
+        if pre_owner_id and post_owner_id and pre_owner_id != post_owner_id:
+            track_ownership_changes[track_id] += 1
+            if pre_owner_stats:
+                pre_owner_stats["tracks_lost"] += 1
+            if post_owner_stats:
+                post_owner_stats["tracks_taken"] += 1
+
+        if (
+            pre_owner_id
+            and winner_id == pre_owner_id
+            and post_owner_id == pre_owner_id
+            and pre_owner_stats
+        ):
+            pre_owner_stats["defense_successes"] += 1
+            pre_owner_stats["current_defense_streak"] += 1
+            if pre_owner_stats["current_defense_streak"] > pre_owner_stats["best_defense_streak"]:
+                pre_owner_stats["best_defense_streak"] = pre_owner_stats["current_defense_streak"]
+            track_defenses[track_id] += 1
+
+        if pre_owner_id and pre_state == -1 and pre_owner_stats:
+            pre_owner_stats["defense_at_risk_attempts"] += 1
+            if winner_id == pre_owner_id and post_owner_id == pre_owner_id:
+                pre_owner_stats["defense_at_risk_successes"] += 1
+
+        if winner_id and pre_state == -1 and winner_stats:
+            winner_stats["wins_on_risk"] += 1
+            if pre_owner_id and winner_id != pre_owner_id:
+                winner_stats["steals_from_risk"] += 1
+
+        if (
+            winner_id
+            and pre_state == 0
+            and pre_owner_id
+            and winner_id != pre_owner_id
+            and post_state == -1
+            and winner_stats
+        ):
+            winner_stats["hunter_marks"] += 1
+
+        if winner_id and pre_state == -1 and pre_threat == winner_id and winner_stats:
+            winner_stats["wins_with_hunter_mark"] += 1
+
+        if pre_owner_stats and pre_owner_id and pre_owner_id != winner_id:
+            pre_owner_stats["current_win_streak"] = 0
+            pre_owner_stats["current_defense_streak"] = 0
+
+    for ps in stats.values():
+        ps["net_tracks"] = ps["tracks_taken"] - ps["tracks_lost"]
+
+        if ps["races_as_owner"] > 0:
+            ps["defense_success_rate"] = (
+                ps["defense_successes"] / ps["races_as_owner"] * 100.0
+            )
+        else:
+            ps["defense_success_rate"] = None
+
+        if ps["defense_at_risk_attempts"] > 0:
+            ps["defense_at_risk_rate"] = (
+                ps["defense_at_risk_successes"] / ps["defense_at_risk_attempts"] * 100.0
+            )
+        else:
+            ps["defense_at_risk_rate"] = None
+        challenger_attempts = max(ps["races_played"] - ps["races_as_owner"], 0)
+        ps["challenge_attempts"] = challenger_attempts
+        if challenger_attempts > 0:
+            ps["challenge_win_rate"] = (
+                ps["wins_as_non_owner"] / challenger_attempts * 100.0
+            )
+        else:
+            ps["challenge_win_rate"] = None
+
+        if ps["races_played"] > 0:
+            ps["win_rate"] = ps["wins"] / ps["races_played"] * 100.0
+        else:
+            ps["win_rate"] = None
+
+    def metric_sort_value(player, descriptor):
+        if descriptor["type"] in ("value", "percent"):
+            val = player.get(descriptor.get("value_key"))
+            return val if val is not None else 0
+        if descriptor["type"] == "pair":
+            num = player.get(descriptor.get("num_key"), 0) or 0
+            den = player.get(descriptor.get("den_key"), 0) or 0
+            return (num / den) if den else 0
+        return 0
+
+    metric_def_map = {d["id"]: d for d in METRIC_DEFS}
+    sort_descriptor = metric_def_map.get(sort_metric_id, metric_def_map.get("wins"))
+
+    player_stats = sorted(
+        stats.values(),
+        key=lambda s: (
+            -metric_sort_value(s, sort_descriptor),
+            -s["tracks_owned"],
+            s["name"].lower(),
+        ),
+    )
+
+    track_activity = []
+    for tid, count in track_race_count.items():
+        info = track_info.get(tid)
+        if not info:
+            continue
+        track_activity.append(
+            {
+                "track_en": info["track_en"],
+                "track_es": info["track_es"],
+                "cup_en": info["cup_en"],
+                "cup_es": info["cup_es"],
+                "races": count,
+            }
+        )
+    track_activity.sort(key=lambda x: (-x["races"], x["track_en"]))
+    track_activity = track_activity[:10]
+
+    most_defended = None
+    if track_defenses:
+        tid = max(track_defenses, key=lambda t: track_defenses[t])
+        info = track_info.get(tid)
+        if info:
+            most_defended = {
+                "track_en": info["track_en"],
+                "track_es": info["track_es"],
+                "cup_en": info["cup_en"],
+                "cup_es": info["cup_es"],
+                "defenses": track_defenses[tid],
+            }
+
+    most_contested = None
+    if track_ownership_changes:
+        tid = max(track_ownership_changes, key=lambda t: track_ownership_changes[t])
+        info = track_info.get(tid)
+        if info:
+            most_contested = {
+                "track_en": info["track_en"],
+                "track_es": info["track_es"],
+                "cup_en": info["cup_en"],
+                "cup_es": info["cup_es"],
+                "changes": track_ownership_changes[tid],
+            }
+
+    track_selector = []
+    selected_track = None
+    track_player_stats = []
+    track_events = []
+
+    if allow_track_insights:
+        for tid, info in track_info.items():
+            track_selector.append(
+                {
+                    "id": tid,
+                    "track_en": info["track_en"],
+                    "track_es": info["track_es"],
+                    "cup_en": info["cup_en"],
+                    "cup_es": info["cup_es"],
+                }
+            )
+        track_selector.sort(key=lambda x: (x["cup_en"], x["track_en"]))
+
+        if selected_track_id:
+            selected_track = db.execute(
+                """
+                SELECT t.*, c.en AS cup_en, c.es AS cup_es
+                FROM tracks t
+                JOIN cups c ON c.id = t.cup_id
+                WHERE t.id = ?
+                """,
+                (selected_track_id,),
+            ).fetchone()
+
+        if selected_track:
+            events = db.execute(
+                """
+                SELECT
+                    e.*,
+                    pw.name   AS winner_name,
+                    preo.name AS pre_owner_name,
+                    posto.name AS post_owner_name
+                FROM events e
+                JOIN tracks t ON t.id = e.track_id
+                LEFT JOIN players pw   ON pw.id   = e.winner_id
+                LEFT JOIN players preo ON preo.id = e.pre_owner_id
+                LEFT JOIN players posto ON posto.id = e.post_owner_id
+                WHERE t.id = ? AND e.is_sweep = 0
+                ORDER BY e.occurred_at ASC, e.id ASC
+                """,
+                (selected_track_id,),
+            ).fetchall()
+
+            per_player_track: defaultdict[int, TrackPlayerStats] = defaultdict(TrackPlayerStats)
+
+            for ev in events:
+                winner_id = ev["winner_id"]
+                pre_owner_id = ev["pre_owner_id"]
+                post_owner_id = ev["post_owner_id"]
+
+                if winner_id:
+                    ps = per_player_track[winner_id]
+                    ps.name = player_names.get(winner_id, f"Player {winner_id}")
+                    ps.wins += 1
+
+                if pre_owner_id and post_owner_id and pre_owner_id != post_owner_id:
+                    ps_old = per_player_track[pre_owner_id]
+                    ps_old.name = player_names.get(pre_owner_id, f"Player {pre_owner_id}")
+                    ps_old.losses += 1
+
+                    ps_new = per_player_track[post_owner_id]
+                    ps_new.name = player_names.get(post_owner_id, f"Player {post_owner_id}")
+                    ps_new.takes += 1
+
+                if (
+                    pre_owner_id
+                    and winner_id == pre_owner_id
+                    and post_owner_id == pre_owner_id
+                ):
+                    ps_def = per_player_track[pre_owner_id]
+                    ps_def.name = player_names.get(pre_owner_id, f"Player {pre_owner_id}")
+                    ps_def.defenses += 1
+
+            track_player_stats = sorted(
+                per_player_track.values(),
+                key=lambda s: (-s.wins, -s.defenses, s.name.lower()),
+            )
+            track_events = events
+
+    def build_cell(player_row, descriptor):
+        if descriptor["type"] == "value":
+            val = player_row.get(descriptor["value_key"], 0) or 0
+            return {"value": val, "highlight": val}
+        if descriptor["type"] == "percent":
+            val = player_row.get(descriptor["value_key"])
+            return {"percent": val, "highlight": val if val is not None else None}
+        if descriptor["type"] == "pair":
+            num = player_row.get(descriptor["num_key"], 0) or 0
+            den = player_row.get(descriptor["den_key"], 0) or 0
+            ratio = (num / den) if den else None
+            return {"num": num, "den": den, "highlight": ratio}
+        return {"value": 0, "highlight": 0}
+
+    metric_rows = []
+    for descriptor in METRIC_DEFS:
+        row = {
+            "id": descriptor["id"],
+            "label": descriptor["label"],
+            "type": descriptor["type"],
+            "group": descriptor["group"],
+            "cells": [],
+            "help": descriptor.get("help"),
+        }
+        max_highlight = None
+        for ps in player_stats:
+            cell = build_cell(ps, descriptor)
+            row["cells"].append(cell)
+            highlight = cell.get("highlight")
+            if highlight is not None and (max_highlight is None or highlight > max_highlight):
+                max_highlight = highlight
+        row["max_highlight"] = max_highlight
+        metric_rows.append(row)
+
+    def top_current(field: str, threshold: int = 2):
+        candidates = [ps for ps in player_stats if ps[field] >= threshold]
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda item: (item[field], item["wins"]))
+        return {"player": best["name"], "streak": best[field]}
+
+    streak_badges = {
+        "hot_hand": top_current("current_win_streak"),
+        "shield_wall": top_current("current_defense_streak"),
+    }
+
+    return {
+        "player_stats": player_stats,
+        "track_activity": track_activity,
+        "most_defended": most_defended,
+        "most_contested": most_contested,
+        "track_selector": track_selector,
+        "selected_track": selected_track,
+        "track_player_stats": track_player_stats,
+        "track_events": track_events,
+        "metric_rows": metric_rows,
+        "streak_badges": streak_badges,
+        "track_insights_enabled": allow_track_insights,
+    }
+
+
+def build_csv_archive(entry):
+    legacy = load_legacy_archive_data(entry.get("file", ""))
+    totals_list = legacy.get("totals", [])
+    champions = []
+    if totals_list:
+        top_count = totals_list[0][1]
+        champions = [name for name, count in totals_list if count == top_count]
+
+    return {
+        "mode": "csv",
+        "label": entry["label"],
+        "notes": entry.get("notes"),
+        "totals": totals_list,
+        "champions": champions,
+        "cups": legacy.get("cups", []),
+    }
+
+
+def resolve_season_id(entry, db):
+    if entry.get("season_id"):
+        return entry["season_id"]
+    if entry.get("season_label"):
+        row = db.execute("SELECT id FROM season_meta WHERE label = ?", (entry["season_label"],)).fetchone()
+        if row:
+            return row["id"]
+    return None
+
+
+def build_db_archive(db, entry):
+    season_id = resolve_season_id(entry, db)
+    if not season_id:
+        return {"mode": "db", "label": entry["label"], "notes": entry.get("notes"), "standings": [], "totals": [], "champions": [], "stats": None, "highlights": []}
+    standings = fetch_standings(db, season_id)
+    decorate_standings_with_art(standings)
+    totals = fetch_totals_overall(db, season_id)
+    stats_payload = compute_stats_data(db, [season_id])
+    champions = []
+    if totals:
+        top_count = totals[0][1]
+        champions = [name for name, count in totals if count == top_count]
+
+    def best_player(key, label):
+        valid = [p for p in stats_payload["player_stats"] if p[key] is not None]
+        if not valid:
+            return None
+        best = max(valid, key=lambda p: p[key])
+        return {"label": label, "player": best["name"], "value": best[key]}
+
+    highlights = [h for h in [
+        best_player("wins", "Most wins"),
+        best_player("tracks_owned", "Tracks controlled"),
+        best_player("defense_success_rate", "Best defense %"),
+    ] if h]
+
+    return {
+        "mode": "db",
+        "label": entry["label"],
+        "notes": entry.get("notes"),
+        "standings": standings,
+        "totals": totals,
+        "champions": champions,
+        "stats": stats_payload,
+        "highlights": highlights,
+    }
 
 
 def _quarter_info_for(day: date):
@@ -335,6 +1108,14 @@ def fetch_standings(db, season_id, *, owner_name=None, cup_code=None, state_filt
     return cups
 
 
+def decorate_standings_with_art(standings):
+    for cup in standings:
+        cup["logo_src"] = cup_image_url(cup)
+        for track in cup["tracks"]:
+            track["image_src"] = track_image_url(track)
+    return standings
+
+
 def fetch_track_detail(db, track_id):
     sql = """
     SELECT
@@ -495,27 +1276,70 @@ def undo_last_event(db):
     if not ev:
         return False
 
-    # Restore side effects first (reverse cup sweep locks, etc.)
+    # Restore side effects first (reverse cup sweep locks, player actions, etc.)
     side_json = ev["side_effects_json"]
+    deactivate_payload = None
+    side_effect_list = None
     if side_json:
         try:
             effects = json.loads(side_json)
-            for eff in effects:
-                db.execute(
-                    """
-                    UPDATE tracks
-                    SET state = COALESCE(?, 0),
-                        threatened_by_id = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        eff.get("pre_state", 0),
-                        eff.get("pre_threatened_by_id"),
-                        eff.get("track_id"),
-                    ),
-                )
+            if isinstance(effects, dict) and effects.get("action") == "deactivate_player":
+                deactivate_payload = effects
+            else:
+                side_effect_list = effects if isinstance(effects, list) else []
         except Exception as e:
             print(f"Undo side effects failed: {e}")
+
+    if side_effect_list:
+        for eff in side_effect_list:
+            track_id = eff.get("track_id")
+            if not track_id:
+                continue
+            if "pre_owner_id" in eff:
+                db.execute(
+                    "UPDATE tracks SET owner_id = ? WHERE id = ?",
+                    (eff.get("pre_owner_id"), track_id),
+                )
+            db.execute(
+                """
+                UPDATE tracks
+                SET state = COALESCE(?, 0),
+                    threatened_by_id = ?
+                WHERE id = ?
+                """,
+                (
+                    eff.get("pre_state", 0),
+                    eff.get("pre_threatened_by_id"),
+                    track_id,
+                ),
+            )
+
+    if deactivate_payload:
+        for eff in deactivate_payload.get("tracks", []):
+            track_id = eff.get("track_id")
+            if not track_id:
+                continue
+            db.execute(
+                """
+                UPDATE tracks
+                SET owner_id = ?,
+                    state = COALESCE(?, 0),
+                    threatened_by_id = ?
+                WHERE id = ?
+                """,
+                (
+                    eff.get("pre_owner_id"),
+                    eff.get("pre_state", 0),
+                    eff.get("pre_threatened_by_id"),
+                    track_id,
+                ),
+            )
+        player_id = deactivate_payload.get("player_id")
+        if player_id:
+            db.execute("UPDATE players SET active = 1 WHERE id = ?", (player_id,))
+        db.execute("DELETE FROM events WHERE id = ?", (ev["id"],))
+        db.commit()
+        return True
 
     # If this was a sweep event, remove it and also undo the race that caused it.
     if ev["is_sweep"]:
@@ -608,10 +1432,7 @@ def index():
                                 owner_name=owner_f,
                                 cup_code=cup_f,
                                 state_filter=state_f)
-    for cup in standings:
-        cup["logo_src"] = cup_image_url(cup)
-        for track in cup["tracks"]:
-            track["image_src"] = track_image_url(track)
+    decorate_standings_with_art(standings)
 
     # Totals (overall, not filtered) and sort for medals
     totals_overall = fetch_totals_overall(db, season_id)  # list of (owner, n)
@@ -626,9 +1447,12 @@ def index():
     cups = fetch_cups_for_season(db, season_id)
 
     default_player = get_default_player(db)
+    streak_entries = compute_player_streaks(db, season_id)
+    streaks_by_name = {info["name"]: info for info in streak_entries.values()}
 
-    return render_template(
+    return render_page(
         "index.html",
+        db,
         standings=standings,
         totals_overall=totals_overall,
         totals_filtered=totals_filtered,
@@ -637,7 +1461,9 @@ def index():
         cups=cups,
         selected_filters={"owner": owner_f, "cup": cup_f, "state": state_f},
         season_label=season_label,
-        default_player=default_player
+        default_player=default_player,
+        streaks_by_name=streaks_by_name,
+        page_title="Koopa Krew - Standings",
     )
 
 
@@ -702,8 +1528,9 @@ def update_result(track_id):
     track_dict = dict(track)
     track_dict["owner"] = track["owner"]
     track_dict["threatened_by"] = track["threatened_by"]
-    return render_template(
+    return render_page(
         "update.html",
+        db,
         track=track_dict,
         players=[p["name"] for p in players],
         season_label=season_label,
@@ -882,8 +1709,9 @@ def events_log():
             "post_mark": r["post_mark"],
         })
 
-    return render_template(
+    return render_page(
         "events.html",
+        db,
         events=events,
         season_label=season_label,
         players=players,
@@ -896,7 +1724,8 @@ def events_log():
             "track": track_filter,
             "event_type": event_type_filter,
             "me": me_filter
-        }
+        },
+        page_title="Koopa Krew - Events",
     )
 
 @app.route("/export/events.csv")
@@ -911,7 +1740,21 @@ def export_events():
 
     # Include both normal race events and sweep events.
     # For sweep events, track_id may or may not be meaningful in the future, so we LEFT JOIN tracks/cups.
-    sql = """
+    season_scope_clause = """
+        (
+            (t.season = ?)
+            OR (
+                t.id IS NULL
+                AND e.is_sweep = 1
+                AND e.sweep_cup_id IN (
+                    SELECT DISTINCT ts.cup_id
+                    FROM tracks ts
+                    WHERE ts.season = ?
+                )
+            )
+        )
+    """
+    sql = f"""
     SELECT
         e.id AS event_id,
         e.occurred_at,
@@ -950,10 +1793,10 @@ def export_events():
     LEFT JOIN players pret ON pret.id = e.pre_threatened_by_id
     LEFT JOIN players posto ON posto.id = e.post_owner_id
     LEFT JOIN players postt ON postt.id = e.post_threatened_by_id
-    WHERE (t.season = ? OR e.is_sweep = 1)
+    WHERE {season_scope_clause}
     ORDER BY e.occurred_at ASC, e.id ASC
     """
-    rows = db.execute(sql, (season_id,)).fetchall()
+    rows = db.execute(sql, (season_id, season_id)).fetchall()
 
     header = [
         "event_id", "occurred_at", "is_sweep",
@@ -1047,9 +1890,12 @@ def export_standings():
             r["owner"], r["state"], state_label(r["state"]), r["mark"]
         ])
     fbits = []
-    if owner_f and owner_f.lower() != "all": fbits.append(f"owner-{owner_f}")
-    if cup_f and cup_f.lower() != "all": fbits.append(f"cup-{cup_f}")
-    if state_f and state_f.lower() != "any": fbits.append(f"state-{state_f}")
+    if owner_f and owner_f.lower() != "all":
+        fbits.append(f"owner-{owner_f}")
+    if cup_f and cup_f.lower() != "all":
+        fbits.append(f"cup-{cup_f}")
+    if state_f and state_f.lower() != "any":
+        fbits.append(f"state-{state_f}")
     suffix = ("_" + "_".join(fbits)) if fbits else ""
     filename = f"standings_{label_safe}{suffix}.csv"
     return csv_response(filename, header, out)
@@ -1057,430 +1903,97 @@ def export_standings():
 @app.route("/stats")
 def stats_page():
     db = get_db()
-    season_row = get_season_row(db, request.args.get("season", type=int))
-    if not season_row:
-        abort(500, "No season configured.")
-    season_id = season_row["id"]
-    season_label = season_row["label"]
-
-    # --- Player base data ---
-    player_rows = db.execute(
-        "SELECT id, name FROM players WHERE active = 1 ORDER BY name"
-    ).fetchall()
-    player_names = {r["id"]: r["name"] for r in player_rows}
-
-    def make_empty_player_stats(name: str):
-        return {
-            "name": name,
-            "tracks_owned": 0,
-            "locked_tracks": 0,
-            "wins": 0,
-            "wins_as_owner": 0,
-            "wins_as_non_owner": 0,
-            "sweeps": 0,
-            "tracks_taken": 0,
-            "tracks_lost": 0,
-            "net_tracks": 0,
-            "races_as_owner": 0,
-            "defense_successes": 0,
-            "defense_success_rate": None,
-            "defense_at_risk_attempts": 0,
-            "defense_at_risk_successes": 0,
-            "defense_at_risk_rate": None,
-            "wins_on_risk": 0,
-            "steals_from_risk": 0,
-            "hunter_marks": 0,
-            "wins_with_hunter_mark": 0,
-            "races_played": 0,
-        }
-
-    stats = {pid: make_empty_player_stats(name) for pid, name in player_names.items()}
-    for pid, entry in stats.items():
-        entry["id"] = pid
-
-    def ensure_player(pid):
-        if pid is None:
-            return None
-        if pid not in stats:
-            stats[pid] = make_empty_player_stats(player_names.get(pid, f"Player {pid}"))
-        return stats[pid]
-
-    # --- Track metadata for this season ---
-    track_rows = db.execute(
-        """
-        SELECT t.id, t.en AS track_en, t.es AS track_es,
-               c.en AS cup_en, c.es AS cup_es,
-               t.owner_id AS final_owner_id,
-               t.state AS final_state
-        FROM tracks t
-        JOIN cups c ON c.id = t.cup_id
-        WHERE t.season = ?
-        """,
-        (season_id,),
-    ).fetchall()
-
-    track_info = {}
-    for r in track_rows:
-        tid = r["id"]
-        track_info[tid] = {
-            "track_en": r["track_en"],
-            "track_es": r["track_es"],
-            "cup_en": r["cup_en"],
-            "cup_es": r["cup_es"],
-        }
-
-        owner_id = r["final_owner_id"]
-        state = r["final_state"]
-        if owner_id is not None:
-            ps = ensure_player(owner_id)
-            ps["tracks_owned"] += 1
-            if state == 1:
-                ps["locked_tracks"] += 1
-
-    # --- Per-track counters used for highlights ---
-    track_race_count = defaultdict(int)
-    track_ownership_changes = defaultdict(int)
-    track_defenses = defaultdict(int)  # successful defenses on that track
-
-    # --- Sweeps per player ---
-    sweep_rows = db.execute(
-        """
-        SELECT e.sweep_owner_id
-        FROM events e
-        JOIN tracks t ON t.id = e.track_id
-        WHERE t.season = ? AND e.is_sweep = 1
-        """,
-        (season_id,),
-    ).fetchall()
-    for r in sweep_rows:
-        sweeper_id = r["sweep_owner_id"]
-        ps = ensure_player(sweeper_id)
-        if ps:
-            ps["sweeps"] += 1
-
-    # --- Normal race events for this season ---
-    event_rows = db.execute(
-        """
-        SELECT e.*, t.id AS track_id
-        FROM events e
-        JOIN tracks t ON t.id = e.track_id
-        WHERE t.season = ? AND e.is_sweep = 0
-        ORDER BY e.occurred_at ASC, e.id ASC
-        """,
-        (season_id,),
-    ).fetchall()
-
-    for e in event_rows:
-        track_id = e["track_id"]
-        winner_id = e["winner_id"]
-        pre_owner_id = e["pre_owner_id"]
-        post_owner_id = e["post_owner_id"]
-        pre_state = e["pre_state"]
-        post_state = e["post_state"]
-        pre_threat = e["pre_threatened_by_id"]
-
-        track_race_count[track_id] += 1
-
-        winner_stats = ensure_player(winner_id)
-        pre_owner_stats = ensure_player(pre_owner_id)
-        post_owner_stats = ensure_player(post_owner_id)
-
-        # Basic wins / races
-        if winner_stats:
-            winner_stats["wins"] += 1
-            winner_stats["races_played"] += 1
-            if pre_owner_id == winner_id:
-                winner_stats["wins_as_owner"] += 1
-            else:
-                winner_stats["wins_as_non_owner"] += 1
-
-        if pre_owner_stats:
-            pre_owner_stats["races_played"] += 1
-            pre_owner_stats["races_as_owner"] += 1
-
-        # Ownership changes
-        if pre_owner_id and post_owner_id and pre_owner_id != post_owner_id:
-            track_ownership_changes[track_id] += 1
-            if pre_owner_stats:
-                pre_owner_stats["tracks_lost"] += 1
-            if post_owner_stats:
-                post_owner_stats["tracks_taken"] += 1
-
-        # General defense: owner keeps track
-        if pre_owner_id and winner_id == pre_owner_id and post_owner_id == pre_owner_id:
-            pre_owner_stats["defense_successes"] += 1
-            track_defenses[track_id] += 1
-
-        # Defense on at-risk tracks
-        if pre_owner_id and pre_state == -1:
-            pre_owner_stats["defense_at_risk_attempts"] += 1
-            if winner_id == pre_owner_id and post_owner_id == pre_owner_id:
-                pre_owner_stats["defense_at_risk_successes"] += 1
-
-        # Wins on at-risk tracks (anyone)
-        if winner_id and pre_state == -1:
-            winner_stats["wins_on_risk"] += 1
-            if pre_owner_id and winner_id != pre_owner_id:
-                winner_stats["steals_from_risk"] += 1
-
-        # Hunter marks: winner puts someone else at risk from default
-        if (
-            winner_id
-            and pre_state == 0
-            and pre_owner_id
-            and winner_id != pre_owner_id
-            and post_state == -1
-        ):
-            winner_stats["hunter_marks"] += 1
-
-        # Wins when you are the existing hunter mark
-        if winner_id and pre_state == -1 and pre_threat == winner_id:
-            winner_stats["wins_with_hunter_mark"] += 1
-
-    # --- Derived per-player stats ---
-    for ps in stats.values():
-        ps["net_tracks"] = ps["tracks_taken"] - ps["tracks_lost"]
-
-        if ps["races_as_owner"] > 0:
-            ps["defense_success_rate"] = (
-                ps["defense_successes"] / ps["races_as_owner"] * 100.0
-            )
-        else:
-            ps["defense_success_rate"] = None
-
-        if ps["defense_at_risk_attempts"] > 0:
-            ps["defense_at_risk_rate"] = (
-                ps["defense_at_risk_successes"] / ps["defense_at_risk_attempts"] * 100.0
-            )
-        else:
-            ps["defense_at_risk_rate"] = None
-        challenger_attempts = max(ps["races_played"] - ps["races_as_owner"], 0)
-        ps["challenge_attempts"] = challenger_attempts
-        if challenger_attempts > 0:
-            ps["challenge_win_rate"] = (
-                ps["wins_as_non_owner"] / challenger_attempts * 100.0
-            )
-        else:
-            ps["challenge_win_rate"] = None
-
-        if ps["races_played"] > 0:
-            ps["win_rate"] = ps["wins"] / ps["races_played"] * 100.0
-        else:
-            ps["win_rate"] = None
-
-    def metric_sort_value(player, descriptor):
-        if descriptor["type"] in ("value", "percent"):
-            val = player.get(descriptor.get("value_key"))
-            return val if val is not None else 0
-        if descriptor["type"] == "pair":
-            num = player.get(descriptor.get("num_key"), 0) or 0
-            den = player.get(descriptor.get("den_key"), 0) or 0
-            return (num / den) if den else 0
-        return 0
-
-    metric_def_map = {d["id"]: d for d in METRIC_DEFS}
+    season_param = request.args.get("season")
     sort_metric_id = request.args.get("sort", default="wins")
-    sort_descriptor = metric_def_map.get(sort_metric_id, metric_def_map.get("wins"))
+    track_param = request.args.get("track_id", type=int)
 
-    player_stats = sorted(
-        stats.values(),
-        key=lambda s: (
-            -metric_sort_value(s, sort_descriptor),
-            -s["tracks_owned"],
-            s["name"].lower(),
-        ),
-    )
+    season_meta_rows = db.execute("SELECT id, label FROM season_meta ORDER BY start_date DESC").fetchall()
+    season_options = [{"id": str(row["id"]), "label": row["label"]} for row in season_meta_rows]
+    season_options.append({"id": "all", "label": "All seasons"})
 
-    # --- Track highlights (season-wide) ---
+    selected_ids = []
+    season_label = "Koopa Krew"
+    selected_option = None
 
-    # Most active tracks
-    track_activity = []
-    for tid, count in track_race_count.items():
-        info = track_info.get(tid)
-        if not info:
-            continue
-        track_activity.append(
-            {
-                "track_en": info["track_en"],
-                "track_es": info["track_es"],
-                "cup_en": info["cup_en"],
-                "cup_es": info["cup_es"],
-                "races": count,
-            }
-        )
-    track_activity.sort(key=lambda x: (-x["races"], x["track_en"]))
-    track_activity = track_activity[:10]
+    if season_param == "all":
+        selected_ids = [row["id"] for row in season_meta_rows]
+        season_label = "All seasons"
+        selected_option = "all"
+        track_param = None
+    else:
+        target_id = None
+        if season_param:
+            try:
+                target_id = int(season_param)
+            except (TypeError, ValueError):
+                target_id = None
+        season_row = get_season_row(db, target_id)
+        if not season_row:
+            abort(500, "No season configured.")
+        season_label = season_row["label"]
+        selected_ids = [season_row["id"]]
+        selected_option = str(season_row["id"])
 
-    # Most defended track
-    most_defended = None
-    if track_defenses:
-        tid = max(track_defenses, key=lambda t: track_defenses[t])
-        info = track_info.get(tid)
-        most_defended = {
-            "track_en": info["track_en"],
-            "track_es": info["track_es"],
-            "cup_en": info["cup_en"],
-            "cup_es": info["cup_es"],
-            "defenses": track_defenses[tid],
-        }
+    if not selected_option and season_meta_rows:
+        selected_option = str(season_meta_rows[0]["id"])
 
-    # Most contested track (ownership changes)
-    most_contested = None
-    if track_ownership_changes:
-        tid = max(track_ownership_changes, key=lambda t: track_ownership_changes[t])
-        info = track_info.get(tid)
-        most_contested = {
-            "track_en": info["track_en"],
-            "track_es": info["track_es"],
-            "cup_en": info["cup_en"],
-            "cup_es": info["cup_es"],
-            "changes": track_ownership_changes[tid],
-        }
+    stats_data = compute_stats_data(db, selected_ids, sort_metric_id, track_param)
 
-    # --- Track selector + optional track-specific stats ---
-
-    track_selector = []
-    for tid, info in track_info.items():
-        track_selector.append(
-            {
-                "id": tid,
-                "track_en": info["track_en"],
-                "track_es": info["track_es"],
-                "cup_en": info["cup_en"],
-                "cup_es": info["cup_es"],
-            }
-        )
-    track_selector.sort(key=lambda x: (x["cup_en"], x["track_en"]))
-
-    selected_track_id = request.args.get("track_id", type=int)
-    selected_track = None
-    track_player_stats = []
-    track_events = []
-
-    if selected_track_id:
-        selected_track = db.execute(
-            """
-            SELECT t.*, c.en AS cup_en, c.es AS cup_es
-            FROM tracks t
-            JOIN cups c ON c.id = t.cup_id
-            WHERE t.id = ? AND t.season = ?
-            """,
-            (selected_track_id, season_id),
-        ).fetchone()
-
-        if selected_track:
-            events = db.execute(
-                """
-                SELECT
-                    e.*,
-                    pw.name   AS winner_name,
-                    preo.name AS pre_owner_name,
-                    posto.name AS post_owner_name
-                FROM events e
-                JOIN tracks t ON t.id = e.track_id
-                LEFT JOIN players pw   ON pw.id   = e.winner_id
-                LEFT JOIN players preo ON preo.id = e.pre_owner_id
-                LEFT JOIN players posto ON posto.id = e.post_owner_id
-                WHERE t.season = ? AND t.id = ? AND e.is_sweep = 0
-                ORDER BY e.occurred_at ASC, e.id ASC
-                """,
-                (season_id, selected_track_id),
-            ).fetchall()
-
-            per_player_track = defaultdict(
-                lambda: {
-                    "name": "",
-                    "wins": 0,
-                    "defenses": 0,
-                    "takes": 0,
-                    "losses": 0,
-                }
-            )
-
-            for ev in events:
-                winner_id = ev["winner_id"]
-                pre_owner_id = ev["pre_owner_id"]
-                post_owner_id = ev["post_owner_id"]
-
-                if winner_id:
-                    ps = per_player_track[winner_id]
-                    ps["name"] = player_names.get(winner_id, f"Player {winner_id}")
-                    ps["wins"] += 1
-
-                if pre_owner_id and post_owner_id and pre_owner_id != post_owner_id:
-                    ps_old = per_player_track[pre_owner_id]
-                    ps_old["name"] = player_names.get(pre_owner_id, f"Player {pre_owner_id}")
-                    ps_old["losses"] += 1
-
-                    ps_new = per_player_track[post_owner_id]
-                    ps_new["name"] = player_names.get(post_owner_id, f"Player {post_owner_id}")
-                    ps_new["takes"] += 1
-
-                if (
-                    pre_owner_id
-                    and winner_id == pre_owner_id
-                    and post_owner_id == pre_owner_id
-                ):
-                    ps_def = per_player_track[pre_owner_id]
-                    ps_def["name"] = player_names.get(pre_owner_id, f"Player {pre_owner_id}")
-                    ps_def["defenses"] += 1
-
-            track_player_stats = sorted(
-                per_player_track.values(),
-                key=lambda s: (-s["wins"], -s["defenses"], s["name"].lower()),
-            )
-            track_events = events
-
-    def build_cell(player_row, descriptor):
-        if descriptor["type"] == "value":
-            val = player_row.get(descriptor["value_key"], 0) or 0
-            return {"value": val, "highlight": val}
-        if descriptor["type"] == "percent":
-            val = player_row.get(descriptor["value_key"])
-            return {"percent": val, "highlight": val if val is not None else None}
-        if descriptor["type"] == "pair":
-            num = player_row.get(descriptor["num_key"], 0) or 0
-            den = player_row.get(descriptor["den_key"], 0) or 0
-            ratio = (num / den) if den else None
-            return {"num": num, "den": den, "highlight": ratio}
-        return {"value": 0, "highlight": 0}
-
-    metric_rows = []
-    for descriptor in METRIC_DEFS:
-        row = {
-            "id": descriptor["id"],
-            "label": descriptor["label"],
-            "type": descriptor["type"],
-            "group": descriptor["group"],
-            "cells": [],
-            "help": descriptor.get("help"),
-        }
-        max_highlight = None
-        for ps in player_stats:
-            cell = build_cell(ps, descriptor)
-            row["cells"].append(cell)
-            highlight = cell.get("highlight")
-            if highlight is not None and (max_highlight is None or highlight > max_highlight):
-                max_highlight = highlight
-        row["max_highlight"] = max_highlight
-        metric_rows.append(row)
-
-    return render_template(
+    return render_page(
         "stats.html",
+        db,
         season_label=season_label,
-        player_stats=player_stats,
-        metric_rows=metric_rows,
         metric_sort_options=METRIC_DEFS,
         selected_sort=sort_metric_id,
-        track_activity=track_activity,
-        most_defended=most_defended,
-        most_contested=most_contested,
-        track_selector=track_selector,
-        selected_track=selected_track,
-        track_player_stats=track_player_stats,
-        track_events=track_events,
+        season_options=season_options,
+        selected_season=selected_option,
+        page_title="Koopa Krew - Stats",
+        **stats_data,
     )
 
+
+@app.route("/archive")
+def archive_page():
+    db = get_db()
+    season_row = get_current_season_row(db)
+    selected_id = request.args.get("season")
+    current_label = season_row["label"] if season_row else None
+    filtered_entries = [
+        entry for entry in ARCHIVE_ENTRIES
+        if not (entry.get("season_label") == current_label and entry.get("type") == "db")
+    ]
+    entry = None
+    if filtered_entries:
+        entry = next((item for item in filtered_entries if item["id"] == selected_id), filtered_entries[0])
+    archive_data = None
+    if entry:
+        if entry.get("type") == "csv":
+            archive_data = build_csv_archive(entry)
+        else:
+            archive_data = build_db_archive(db, entry)
+    active_label = entry["label"] if entry else (season_row["label"] if season_row else "Koopa Krew")
+    return render_page(
+        "archive.html",
+        db,
+        archive_data=archive_data,
+        archive_entries=filtered_entries,
+        selected_archive_id=entry["id"] if entry else None,
+        season_label=active_label,
+        page_title=f"Koopa Krew - Archive ({active_label})",
+    )
+
+
+@app.route("/rules")
+def rules_page():
+    db = get_db()
+    season_row = get_current_season_row(db)
+    season_label = season_row["label"] if season_row else "Koopa Krew"
+    return render_page(
+        "rules.html",
+        db,
+        season_label=season_label,
+        page_title="Koopa Krew - Rules",
+    )
 
 @app.route("/admin/players", methods=["GET", "POST"])
 def admin_players():
@@ -1502,9 +2015,8 @@ def admin_players():
                 except sqlite3.IntegrityError:
                     flash("That name already exists.", "error")
         elif action == "rename":
-            try:
-                player_id = int(request.form.get("player_id"))
-            except (TypeError, ValueError):
+            player_id = request.form.get("player_id", type=int)
+            if player_id is None:
                 flash("Invalid player id.", "error")
                 return redirect(url_for("admin_players"))
             name = (request.form.get("name") or "").strip()
@@ -1518,17 +2030,22 @@ def admin_players():
                 except sqlite3.IntegrityError:
                     flash("That name already exists.", "error")
         elif action == "toggle":
-            try:
-                player_id = int(request.form.get("player_id"))
-            except (TypeError, ValueError):
+            player_id = request.form.get("player_id", type=int)
+            if player_id is None:
                 flash("Invalid player id.", "error")
             else:
-                db.execute(
-                    "UPDATE players SET active = CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id = ?",
-                    (player_id,),
-                )
-                db.commit()
-                flash("Toggled player status.", "success")
+                row = db.execute("SELECT active FROM players WHERE id = ?", (player_id,)).fetchone()
+                if not row:
+                    flash("Player not found.", "error")
+                elif row["active"] == 1:
+                    if deactivate_player(db, player_id):
+                        flash("Player deactivated and tracks cleared.", "success")
+                    else:
+                        flash("Player could not be deactivated.", "error")
+                else:
+                    db.execute("UPDATE players SET active = 1 WHERE id = ?", (player_id,))
+                    db.commit()
+                    flash("Player reactivated.", "success")
         else:
             flash("Unknown action.", "error")
         return redirect(url_for("admin_players"))
@@ -1537,8 +2054,9 @@ def admin_players():
     filtered_players = players if show_mode == "all" else [p for p in players if p["active"]]
     active_count = sum(1 for p in players if p["active"])
     inactive_count = len(players) - active_count
-    return render_template(
+    return render_page(
         "admin_players.html",
+        db,
         season_label=season_label,
         players=filtered_players,
         counts={"active": active_count, "inactive": inactive_count},
@@ -1572,6 +2090,24 @@ def clear_default_player():
     flash("Cleared your default player.", "info")
     show_mode = request.form.get("show_mode")
     return redirect(url_for("admin_players", show=show_mode) if show_mode else url_for("admin_players"))
+
+
+@app.route("/presence/ping", methods=["POST"])
+def presence_ping():
+    db = get_db()
+    default_player = get_default_player(db)
+    token = session.get("presence_token")
+    if not default_player:
+        if token:
+            ONLINE_PINGS.pop(token, None)
+            session.pop("presence_token", None)
+        return jsonify({"status": "ignored"})
+    if not token:
+        token = secrets.token_hex(16)
+        session["presence_token"] = token
+    ONLINE_PINGS[token] = {"player_id": default_player["id"], "last_seen": time.time()}
+    _purge_presence()
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

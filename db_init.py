@@ -1,8 +1,6 @@
 import os
 import csv
 import sqlite3
-from datetime import date
-from zoneinfo import ZoneInfo
 
 DB_PATH = os.environ.get("KOOPAKREW_DB", "koopakrew.db")
 LOCAL_TZ = os.environ.get("KOOPAKREW_TZ", "America/Costa_Rica")

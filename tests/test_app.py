@@ -185,6 +185,23 @@ class AppModuleTests(AppTestCase):
             self.assertEqual(salim_stats["wins_as_owner"], 1)
             self.assertGreaterEqual(sergio_stats["tracks_taken"], 1)
 
+    def test_stats_page_includes_inactive_player_names(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        season_id = ctx["season_id"]
+        track_blank = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_blank, salim_id)
+            db.execute("UPDATE players SET active = 0 WHERE id = ?", (salim_id,))
+            db.commit()
+        with captured_templates(app.app) as templates:
+            resp = client.get("/stats")
+            self.assertEqual(resp.status_code, 200)
+            template, context = templates[0]
+            names = [p["name"] for p in context["player_stats"]]
+            self.assertIn("Salim", names)
+
     def test_events_filter_by_type(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
@@ -272,6 +289,107 @@ class AppModuleTests(AppTestCase):
         body = resp.get_data(as_text=True)
         self.assertIn("Events CSV", body)
         self.assertIn(f'value="{salim_id}" selected', body)
+
+    def test_archive_page_loads(self):
+        client, _, _ = self.bootstrap(seed_active_environment)
+        resp = client.get("/archive")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Season 1", resp.get_data(as_text=True))
+
+    def test_undo_player_deactivation_restores_tracks(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        owned_track = ctx["tracks"]["owned"]
+        client.post(
+            "/admin/players",
+            data={"action": "toggle", "player_id": salim_id},
+            follow_redirects=True,
+        )
+        with app.app.app_context():
+            db = app.get_db()
+            active = db.execute(
+                "SELECT active FROM players WHERE id = ?",
+                (salim_id,),
+            ).fetchone()["active"]
+            self.assertEqual(active, 0)
+            owner = db.execute(
+                "SELECT owner_id FROM tracks WHERE id = ?",
+                (owned_track,),
+            ).fetchone()["owner_id"]
+            self.assertIsNone(owner)
+        client.post("/undo")
+        with app.app.app_context():
+            db = app.get_db()
+            active = db.execute(
+                "SELECT active FROM players WHERE id = ?",
+                (salim_id,),
+            ).fetchone()["active"]
+            self.assertEqual(active, 1)
+            owner = db.execute(
+                "SELECT owner_id FROM tracks WHERE id = ?",
+                (owned_track,),
+            ).fetchone()["owner_id"]
+            self.assertEqual(owner, salim_id)
+
+    def test_presence_ping_tracks_online_players(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        app.ONLINE_PINGS.clear()
+        with client.session_transaction() as sess:
+            sess["default_player_id"] = salim_id
+        resp = client.post("/presence/ping")
+        self.assertEqual(resp.status_code, 200)
+        with app.app.app_context():
+            db = app.get_db()
+            online = app.get_online_players(db)
+        self.assertIn("Salim", online)
+
+    def test_export_events_filters_other_season_sweeps(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        season_id = ctx["season_id"]
+        track_blank = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_blank, salim_id)
+            other_season = db.execute(
+                "INSERT INTO season_meta (label, start_date, end_date) VALUES (?, ?, ?)",
+                ("Season Y", "2024-01-01", "2024-04-01"),
+            ).lastrowid
+            other_cup_id = db.execute(
+                'INSERT INTO cups (code, en, es, "order") VALUES (?, ?, ?, ?)',
+                (f"T{other_season}", "Time Cup", "Copa Tiempo", other_season),
+            ).lastrowid
+            other_track = db.execute(
+                """
+                INSERT INTO tracks
+                    (code, cup_id, en, es, order_in_cup, owner_id, state, threatened_by_id, season)
+                VALUES (?, ?, ?, ?, ?, NULL, 0, NULL, ?)
+                """,
+                (f"TC{other_season}", other_cup_id, "Temporal Track", "Pista Temporal", 1, other_season),
+            ).lastrowid
+            db.execute(
+                """
+                INSERT INTO events
+                  (track_id, winner_id, occurred_at,
+                   pre_owner_id, pre_state, pre_threatened_by_id,
+                   post_owner_id, post_state, post_threatened_by_id,
+                   side_effects_json, is_sweep, sweep_cup_id, sweep_owner_id)
+                VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, 1, ?, ?)
+                """,
+                (
+                    other_track,
+                    salim_id,
+                    "2024-02-02T00:00:00",
+                    json.dumps([]),
+                    other_cup_id,
+                    salim_id,
+                ),
+            )
+            db.commit()
+        resp = client.get("/export/events.csv")
+        body = resp.get_data(as_text=True)
+        self.assertNotIn("Time Cup", body)
 
 
 if __name__ == "__main__":

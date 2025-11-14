@@ -2,7 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Koopa Krew — {{ season_label }}</title>
+  <title>{{ page_title }}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/KK.png') }}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root{
@@ -19,8 +20,29 @@
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
     .card{border:1px solid var(--border);border-radius:12px;padding:12px;background:#fff;display:flex;flex-direction:column;gap:6px}
     .card-footer{margin-top:auto;display:flex;justify-content:flex-end}
-    .hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap}
+    .hdr{display:flex;justify-content:center;align-items:center;margin-bottom:12px}
+    .brand{display:flex;flex-direction:column;gap:6px;align-items:center;width:100%}
+    .brand-mobile{display:flex}
+    .brand-desktop{display:none}
+    .logo-stack{position:relative;width:min(100%,360px);max-width:360px;margin:0 auto}
+    .logo-stack img{display:block;width:100%;height:auto}
+    .logo-stack .koopalings{filter:drop-shadow(0 3px 10px rgba(0,0,0,0.3))}
+    .logo-stack .koopalogo{position:absolute;inset:auto 0 2% 0;width:78%;max-width:260px;margin:0 auto;filter:drop-shadow(0 6px 14px rgba(0,0,0,0.45));cursor:pointer}
+    .season-chip{display:inline-flex;align-items:center;gap:6px;background:#1e1e1e;color:#fff;border-radius:999px;padding:4px 12px;font-weight:600;font-size:0.95em;box-shadow:0 4px 10px rgba(0,0,0,0.2);margin-top:4px}
     nav{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .nav-toggle{border:none;background:#4a148c;color:#fff;padding:12px 18px;border-radius:18px;font-weight:600;cursor:pointer;box-shadow:0 6px 16px rgba(74,20,140,0.3);width:100%;margin:12px 0}
+    .control-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.35);backdrop-filter:blur(1px);opacity:0;pointer-events:none;transition:opacity 0.2s ease;z-index:20}
+    .control-overlay.open{opacity:1;pointer-events:auto}
+    .control-drawer{position:fixed;top:0;right:-420px;width:360px;max-width:90%;height:100%;background:#fff;border-left:1px solid var(--border);box-shadow:-4px 0 16px rgba(0,0,0,0.2);z-index:30;transition:right 0.25s ease;padding:24px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
+    .control-drawer.open{right:0}
+    .drawer-header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .drawer-close{border:none;background:none;font-size:1.2em;cursor:pointer;padding:6px}
+    .drawer-section{border:1px dashed var(--border);border-radius:14px;padding:10px 12px;background:#fafafa}
+    .drawer-section h3{margin:0;font-size:1em}
+    .drawer-nav{display:flex;flex-direction:column;gap:8px}
+    .drawer-nav a.btn,.drawer-nav button.btn{width:100%;justify-content:center}
+    .drawer-debug{font-size:0.85em;color:#666;text-align:center}
+    .drawer-hero{display:none;flex-direction:column;gap:6px;align-items:center}
     .totals{margin:12px 0;padding:12px;background:var(--bg-muted);border-radius:8px}
     a.btn, button.btn{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid #888;border-radius:999px;text-decoration:none;background:#fff;cursor:pointer;font-weight:500;color:#4a148c}
     a.btn:hover, button.btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -33,6 +55,7 @@
     table{width:100%;border-collapse:collapse}
     th,td{padding:6px 8px;border:1px solid var(--border);text-align:left}
     th{background:#fafafa;font-weight:600}
+    .online-banner{margin:8px 0;padding:6px 12px;border:1px dashed var(--border);border-radius:999px;font-size:0.9em;background:#fcfcfc;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
     .stats-table{min-width:500px}
     .stats-table td.metric-name{position:sticky;left:0;background:#fff;font-weight:600;z-index:1;min-width:140px}
     .stats-table tr:nth-child(even){background:#fcfcfc}
@@ -67,6 +90,8 @@
     .track-thumb{width:100%;aspect-ratio:160/111;border-radius:20px;object-fit:contain;background:#000;display:block;box-shadow:0 6px 16px rgba(0,0,0,0.25)}
     .track-thumb-placeholder{width:100%;aspect-ratio:160/111;border-radius:20px;background:#eceff1;color:#607d8b;display:flex;align-items:center;justify-content:center;font-size:2em;font-weight:700}
     .track-content{display:flex;flex-direction:column;gap:6px;width:100%}
+    .track-card.search-hidden{display:none !important}
+    details.cup-panel.search-hidden{display:none}
     .track-names strong{color:#0d1f34;text-shadow:0 0 4px rgba(255,255,255,0.85)}
     .track-names small{display:block;color:#5f6c80;text-shadow:0 0 4px rgba(255,255,255,0.95)}
     .track-state{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -86,7 +111,10 @@
     .player-name-input{width:140px;max-width:100%}
     .btn.icon{padding:4px 8px;font-size:0.9em}
     @media (max-width:720px){
-      .hdr{flex-direction:column;align-items:flex-start}
+      .hdr{flex-direction:column;align-items:center}
+      .logo-stack{max-width:320px}
+      .logo-stack .koopalogo{position:absolute;inset:auto 0 1% 0;max-width:240px}
+      .nav-toggle{position:static;width:100%;margin:12px 0}
       nav{width:100%;justify-content:flex-start}
       .stats-table td.metric-name{min-width:120px;font-size:0.95em}
       .stats-table td{font-size:0.95em}
@@ -109,21 +137,72 @@
       .track-card.has-art .track-thumb-wrapper{display:none}
       .filter-actions .btn{width:100%;justify-content:center}
     }
+    @media (min-width:900px){
+      .brand-mobile{display:none}
+      .brand-desktop{display:flex}
+      .drawer-hero{display:flex}
+      .nav-toggle{position:fixed;top:24px;right:24px;width:auto;margin:0;z-index:40}
+    }
   </style>
 </head>
-<body>
+<body data-default-player-id="{{ default_player.id if default_player else '' }}">
   <header class="hdr">
-    <h1>Koopa Krew — {{ season_label }}</h1>
-    <nav>
+    <div class="brand brand-mobile">
+      <div class="logo-stack" aria-label="Koopa Krew" onclick="window.location='{{ url_for('index') }}'" role="button">
+        <img class="koopalings" src="{{ url_for('static', filename='images/KoopalingsMK8.png') }}" alt="Koopalings racing illustration">
+        <img class="koopalogo" src="{{ url_for('static', filename='images/' ~ hero_logo_filename) }}" alt="Koopa Krew logo">
+      </div>
+      <div class="season-chip">{{ season_label.replace("—", " - ") }}</div>
+    </div>
+  </header>
+  <button class="nav-toggle" type="button" data-drawer-toggle>
+    ☰ Control Center
+  </button>
+  <div class="control-overlay" data-drawer-overlay></div>
+  <aside class="control-drawer" aria-hidden="true" data-drawer>
+    <div class="drawer-header">
+      <div class="season-chip">{{ season_label.replace("—", " - ") }}</div>
+      <button class="drawer-close" type="button" aria-label="Close" data-drawer-close>×</button>
+    </div>
+    <div class="drawer-hero brand-desktop" aria-hidden="true">
+      <div class="logo-stack" aria-label="Koopa Krew">
+        <img class="koopalings" src="{{ url_for('static', filename='images/KoopalingsMK8.png') }}" alt="Koopalings racing illustration">
+        <img class="koopalogo" src="{{ url_for('static', filename='images/' ~ hero_logo_filename) }}" alt="Koopa Krew logo">
+      </div>
+    </div>
+    <nav class="drawer-nav">
       <a class="btn" href="{{ url_for('index') }}">Standings</a>
       <a class="btn" href="{{ url_for('events_log') }}">Events</a>
       <a class="btn" href="{{ url_for('stats_page') }}">Stats</a>
+      <a class="btn" href="{{ url_for('rules_page') }}">Rules</a>
+      <a class="btn" href="{{ url_for('archive_page') }}">Archive</a>
       <a class="btn" href="{{ url_for('admin_players') }}">Players</a>
       <form class="inline" action="{{ url_for('undo') }}" method="post">
         <button class="btn" type="submit">Undo last change</button>
       </form>
     </nav>
-  </header>
+    <div class="drawer-section">
+      <strong>Online players:</strong>
+      {% if online_players %}
+        {{ online_players | join(", ") }}
+      {% else %}
+        <span class="event-detail" style="margin-left:4px;">No one has checked in yet.</span>
+      {% endif %}
+    </div>
+    {% block panel_content %}{% endblock %}
+    {% set raw_season = request.args.get('season') %}
+    {% set season_query = raw_season|int if raw_season is not none and raw_season != '' else None %}
+    <div class="drawer-debug">
+      Debug exports:
+      <a href="{{ url_for('export_standings',
+        season=season_query,
+        owner=request.args.get('owner', default='all'),
+        cup=request.args.get('cup', default='all'),
+        state=request.args.get('state', default='any')) }}">Standings CSV</a>
+      ·
+      <a href="{{ url_for('export_events', season=season_query) }}">Events CSV</a>
+    </div>
+  </aside>
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for category, message in messages %}
@@ -142,6 +221,45 @@
         tip.classList.toggle("active");
       }
     });
+    (function(){
+      const defaultPlayerId = document.body.dataset.defaultPlayerId;
+      if (!defaultPlayerId) return;
+      const ping = () => {
+        fetch("{{ url_for('presence_ping') }}", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: "{}",
+          credentials: "same-origin"
+        }).catch(() => {});
+      };
+      ping();
+      setInterval(ping, 45000);
+    })();
+  </script>
+  <script>
+    (function(){
+      const drawer = document.querySelector("[data-drawer]");
+      const overlay = document.querySelector("[data-drawer-overlay]");
+      const toggleBtn = document.querySelector("[data-drawer-toggle]");
+      const closeBtn = document.querySelector("[data-drawer-close]");
+      const closeDrawer = () => {
+        drawer.classList.remove("open");
+        overlay.classList.remove("open");
+        drawer.setAttribute("aria-hidden", "true");
+        toggleBtn?.setAttribute("aria-expanded", "false");
+      };
+      const openDrawer = () => {
+        drawer.classList.add("open");
+        overlay.classList.add("open");
+        drawer.setAttribute("aria-hidden", "false");
+        toggleBtn?.setAttribute("aria-expanded", "true");
+      };
+      toggleBtn?.addEventListener("click", () => {
+        if (drawer.classList.contains("open")) closeDrawer(); else openDrawer();
+      });
+      closeBtn?.addEventListener("click", closeDrawer);
+      overlay?.addEventListener("click", closeDrawer);
+    })();
   </script>
 </body>
 </html>

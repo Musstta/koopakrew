@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h2>Season archive</h2>
+
+{% if archive_entries %}
+  <form method="get" class="filter-form" style="max-width:320px;margin-bottom:12px;">
+    <label>
+      Season
+      <select name="season">
+        {% for entry in archive_entries %}
+          <option value="{{ entry.id }}" {% if selected_archive_id == entry.id %}selected{% endif %}>
+            {{ entry.label }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn" type="submit">View</button>
+  </form>
+{% endif %}
+
+{% if archive_data %}
+  <div class="totals" style="background:#eef2ff;">
+    <strong>{{ archive_data.label }}</strong>
+    {% if archive_data.champions %}
+      <div style="margin-top:4px;">🏆 Champion: {{ archive_data.champions | join(", ") }}</div>
+    {% endif %}
+    {% if archive_data.notes %}
+      <div style="font-size:0.9em;color:#555;">{{ archive_data.notes }}</div>
+    {% endif %}
+  </div>
+
+  {% if archive_data.mode == 'csv' %}
+    <div class="totals">
+      <strong>Final track counts</strong>
+      <ol style="margin:.4em 0 0 1.2em;padding:0;">
+        {% for owner, count in archive_data.totals %}
+          <li style="list-style:none;margin:.1em 0;">{{ owner }} — {{ count }}</li>
+        {% endfor %}
+      </ol>
+    </div>
+    {% for cup in archive_data.cups %}
+      <div class="totals">
+        <strong>{{ cup.cup_name }}</strong>
+        <ul>
+          {% for track in cup.tracks %}
+            <li>{{ track.track }} — {{ track.owner or "—" }} {% if track.state %}<em>({{ track.state }})</em>{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="totals">
+      <strong>Final standings</strong>
+      <ol style="margin:.4em 0 0 1.2em;padding:0;">
+        {% for owner, count in archive_data.totals %}
+          <li style="list-style:none;margin:.1em 0;">{{ owner }} — {{ count }}</li>
+        {% endfor %}
+      </ol>
+    </div>
+
+    {% if archive_data.highlights %}
+      <div class="totals" style="background:#fffbea;">
+        <strong>Highlights</strong>
+        <ul>
+          {% for hl in archive_data.highlights %}
+            <li>{{ hl.label }}: {{ hl.player }} ({{ hl.value }})</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if archive_data.stats and archive_data.stats.track_activity %}
+      <div class="totals">
+        <strong>Most active tracks</strong>
+        <ol style="margin:.4em 0 0 1.2em;padding:0;">
+          {% for track in archive_data.stats.track_activity %}
+            <li style="list-style:none;margin:.1em 0;">
+              {{ track.track_en }} ({{ track.cup_en }}) — {{ track.races }} races
+            </li>
+          {% endfor %}
+        </ol>
+      </div>
+    {% endif %}
+
+    {% for cup in archive_data.standings %}
+      <details class="cup-panel" open>
+        <summary>
+          <div class="cup-logo">
+            {% if cup.logo_src %}
+              <img src="{{ cup.logo_src }}" alt="{{ cup.cup_en }} logo">
+            {% else %}
+              <div class="cup-logo-placeholder">{{ cup.cup_en[0] }}</div>
+            {% endif %}
+          </div>
+          <div>
+            <h2 style="margin:0;">{{ cup.cup_en }} ({{ cup.cup_es }})</h2>
+          </div>
+        </summary>
+        <div class="cup-tracks">
+          {% for t in cup.tracks %}
+            {% set has_art = t.image_src is not none %}
+            <div class="track-card {% if has_art %}has-art{% endif %}" {% if has_art %}style="--track-art: url('{{ t.image_src }}');"{% endif %}>
+              <div class="track-thumb-wrapper">
+                {% if has_art %}
+                  <img class="track-thumb" src="{{ t.image_src }}" alt="{{ t.track_en }}">
+                {% else %}
+                  <div class="track-thumb-placeholder">{{ t.track_en[0] }}</div>
+                {% endif %}
+              </div>
+              <div class="track-content">
+                <div class="track-names">
+                  <strong>{{ t.track_en }}</strong>
+                  <small>{{ t.track_es }}</small>
+                </div>
+                <div class="owner-line">Owner: {{ t.owner or "—" }}</div>
+                <div class="track-state">
+                  {% if t.state == 1 %}
+                    <span class="badge badge-locked">🔒 Locked</span>
+                  {% elif t.state == -1 %}
+                    <span class="badge badge-risk">⚠️ At risk</span>
+                    {% if t.threatened_by %}
+                      <span class="badge badge-hunter">🎯 {{ t.threatened_by }}</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="badge badge-default">Default</span>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </details>
+    {% endfor %}
+  {% endif %}
+{% else %}
+  <p>No archive data available.</p>
+{% endif %}
+
+{% endblock %}

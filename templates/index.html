@@ -35,15 +35,17 @@
     <button class="btn" type="submit">Apply</button>
     <a class="btn" href="{{ url_for('index') }}">Reset</a>
   </div>
+  <div class="filter-actions">
+    <small style="color:#666;">Need CSV exports? Use the Control Center ☰.</small>
+  </div>
 </form>
 
-<div style="text-align:right;margin-top:-8px;margin-bottom:12px;font-size:0.85em;color:#555;">
-  Debug exports:
-  <a href="{{ url_for('export_standings', owner=selected_filters.owner, cup=selected_filters.cup, state=selected_filters.state) }}">
-    Standings CSV
-  </a>
-  ·
-  <a href="{{ url_for('export_events') }}">Events CSV</a>
+<div class="totals" style="margin-top:8px;">
+  <label style="display:flex;flex-direction:column;gap:4px;">
+    Quick search (track or cup)
+    <input type="search" id="track-search" placeholder="e.g. Senda Arcoiris / Rainbow Road" style="padding:8px;border-radius:10px;border:1px solid #ccc;">
+  </label>
+  <small style="color:#555;">Search matches English or Spanish names instantly on this page.</small>
 </div>
 
 {% if default_player %}
@@ -68,6 +70,13 @@
         <li style="list-style:none;margin:.1em 0;">
           {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}.{% endif %}
           {{ p }}: {{ n }}
+          {% set streak = streaks_by_name.get(p) %}
+          {% if streak and streak.current_win_streak >= 2 %}
+            🔥 {{ streak.current_win_streak }}
+          {% endif %}
+          {% if streak and streak.current_defense_streak >= 2 %}
+            🛡️ {{ streak.current_defense_streak }}
+          {% endif %}
         </li>
       {% endfor %}
     </ol>
@@ -87,6 +96,13 @@
           <li style="list-style:none;margin:.1em 0;">
             {% if loop.index0 == 0 %}🥇{% elif loop.index0 == 1 %}🥈{% elif loop.index0 == 2 %}🥉{% else %}{{ loop.index }}.{% endif %}
             {{ p }}: {{ n }}
+            {% set streak = streaks_by_name.get(p) %}
+            {% if streak and streak.current_win_streak >= 2 %}
+              🔥 {{ streak.current_win_streak }}
+            {% endif %}
+            {% if streak and streak.current_defense_streak >= 2 %}
+              🛡️ {{ streak.current_defense_streak }}
+            {% endif %}
           </li>
         {% endfor %}
       </ol>
@@ -154,5 +170,31 @@
     </div>
   </details>
 {% endfor %}
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('track-search');
+    if (!input) return;
+    const cards = Array.from(document.querySelectorAll('.track-card'));
+    const panels = Array.from(document.querySelectorAll('details.cup-panel'));
+    cards.forEach(card => {
+      const cupHeading = card.closest('details.cup-panel')?.querySelector('summary h2')?.innerText || '';
+      card.dataset.searchText = (cupHeading + ' ' + card.innerText).toLowerCase();
+    });
+    const applyFilter = () => {
+      const term = input.value.trim().toLowerCase();
+      cards.forEach(card => {
+        const match = !term || card.dataset.searchText.includes(term);
+        card.classList.toggle('search-hidden', !match);
+      });
+      panels.forEach(panel => {
+        const visibleTracks = panel.querySelectorAll('.track-card:not(.search-hidden)').length;
+        panel.classList.toggle('search-hidden', term && visibleTracks === 0);
+      });
+    };
+    input.addEventListener('input', applyFilter);
+    applyFilter();
+  });
+</script>
 
 {% endblock %}
