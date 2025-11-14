@@ -23,7 +23,6 @@ koopakrew.db
 *.db
 tmp/
 MK8Tracks*.csv
-!MK8TracksSeason1.csv
 
 # Editors and IDEs
 .vscode/
