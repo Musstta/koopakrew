@@ -145,10 +145,12 @@ class PlayerStatsDict(TypedDict):
     name: str
     tracks_owned: int
     locked_tracks: int
+    locks_applied: int
     wins: int
     wins_as_owner: int
     wins_as_non_owner: int
     sweeps: int
+    cups_owned_count: int
     tracks_taken: int
     tracks_lost: int
     net_tracks: int
@@ -312,6 +314,8 @@ def render_page(template_name: str, db, **context):
 METRIC_DEFS = [
     {"id": "tracks_owned", "label": "Tracks", "type": "value", "value_key": "tracks_owned", "group": "control", "sort_mode": "value", "help": "Tracks currently controlled."},
     {"id": "locked_tracks", "label": "Locked", "type": "value", "value_key": "locked_tracks", "group": "control", "sort_mode": "value", "help": "Owned tracks that are locked."},
+    {"id": "locks_applied", "label": "Locks applied", "type": "value", "value_key": "locks_applied", "group": "control", "sort_mode": "value", "help": "Times you locked a track (sweeps or owner wins on default)."},
+    {"id": "cups_owned_count", "label": "Cups owned", "type": "value", "value_key": "cups_owned_count", "group": "control", "sort_mode": "value", "help": "Cups where you currently hold every track."},
     {"id": "races_played", "label": "Tracked races", "type": "value", "value_key": "races_played", "group": "performance", "sort_mode": "value", "help": "Races where the system recorded you as owner or winner."},
     {"id": "wins", "label": "Wins", "type": "value", "value_key": "wins", "group": "performance", "sort_mode": "value", "help": "Total race wins."},
     {"id": "win_rate", "label": "Win %", "type": "percent", "value_key": "win_rate", "group": "performance", "sort_mode": "value", "help": "Recorded wins divided by tracked races (owner/winner only)."},
@@ -321,9 +325,11 @@ METRIC_DEFS = [
     {"id": "tracks_taken", "label": "Tracks taken", "type": "value", "value_key": "tracks_taken", "group": "performance", "sort_mode": "value", "help": "Tracks gained from others."},
     {"id": "tracks_lost", "label": "Tracks lost", "type": "value", "value_key": "tracks_lost", "group": "performance", "sort_mode": "value", "help": "Tracks lost to challengers."},
     {"id": "net_tracks", "label": "Net gain", "type": "value", "value_key": "net_tracks", "group": "performance", "sort_mode": "value", "help": "Tracks taken minus lost."},
+    {"id": "best_win_streak", "label": "🔥 Longest hot hand", "type": "value", "value_key": "best_win_streak", "group": "performance", "sort_mode": "value", "help": "Best win streak recorded this season."},
+    {"id": "best_defense_streak", "label": "🛡️ Longest shield wall", "type": "value", "value_key": "best_defense_streak", "group": "performance", "sort_mode": "value", "help": "Best defense streak recorded this season."},
     {"id": "wins_on_risk", "label": "Risk wins", "type": "value", "value_key": "wins_on_risk", "group": "risk", "sort_mode": "value", "help": "Wins on tracks that began the race at risk."},
     {"id": "steals_from_risk", "label": "Risk steals", "type": "value", "value_key": "steals_from_risk", "group": "risk", "sort_mode": "value", "help": "At-risk wins that stole the track."},
-    {"id": "hunter_marks", "label": "Hunter tags", "type": "value", "value_key": "hunter_marks", "group": "risk", "sort_mode": "value", "help": "Times a challenger marked someone at risk."},
+    {"id": "hunter_marks", "label": "Hunter marks", "type": "value", "value_key": "hunter_marks", "group": "risk", "sort_mode": "value", "help": "Times you marked someone at risk."},
     {"id": "wins_with_hunter_mark", "label": "Hunter closes", "type": "value", "value_key": "wins_with_hunter_mark", "group": "risk", "sort_mode": "value", "help": "Wins when already tagged as hunter."},
     {
         "id": "defense_succ_att",
@@ -529,6 +535,8 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             "track_events": [],
             "metric_rows": [],
             "streak_badges": {},
+            "player_spotlights": [],
+            "track_insights_enabled": False,
         }
     season_clause = ",".join("?" for _ in season_ids)
     allow_track_insights = len(season_ids) == 1
@@ -547,10 +555,12 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             "name": name,
             "tracks_owned": 0,
             "locked_tracks": 0,
+            "locks_applied": 0,
             "wins": 0,
             "wins_as_owner": 0,
             "wins_as_non_owner": 0,
             "sweeps": 0,
+            "cups_owned_count": 0,
             "tracks_taken": 0,
             "tracks_lost": 0,
             "net_tracks": 0,
@@ -588,6 +598,7 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
     track_rows = db.execute(
         f"""
         SELECT t.id, t.en AS track_en, t.es AS track_es,
+               c.id AS cup_id, c.code AS cup_code,
                c.en AS cup_en, c.es AS cup_es,
                t.owner_id AS final_owner_id,
                t.state AS final_state,
@@ -600,31 +611,66 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
     ).fetchall()
 
     track_info = {}
+    cup_track_totals = defaultdict(int)
+    cup_owner_counts = defaultdict(lambda: defaultdict(int))
+    cup_entries = {}
+    cup_meta_by_id = {}
     for r in track_rows:
         tid = r["id"]
         track_info[tid] = {
             "track_en": r["track_en"],
             "track_es": r["track_es"],
+            "cup_id": r["cup_id"],
+            "cup_code": r["cup_code"],
             "cup_en": r["cup_en"],
             "cup_es": r["cup_es"],
+            "season_id": r["season_id"],
         }
 
         owner_id = r["final_owner_id"]
         state = r["final_state"]
+        cup_key = (r["season_id"], r["cup_id"])
+        cup_track_totals[cup_key] += 1
+        cup_entries[cup_key] = {
+            "cup_en": r["cup_en"],
+            "cup_es": r["cup_es"],
+            "cup_code": r["cup_code"],
+            "season_id": r["season_id"],
+            "cup_id": r["cup_id"],
+        }
+        cup_meta_by_id[r["cup_id"]] = {
+            "cup_en": r["cup_en"],
+            "cup_es": r["cup_es"],
+            "cup_code": r["cup_code"],
+        }
         if owner_id is not None:
             ps = ensure_player(owner_id)
             if ps:
                 ps["tracks_owned"] += 1
                 if state == 1:
                     ps["locked_tracks"] += 1
+                cup_owner_counts[cup_key][owner_id] += 1
+
+    cup_ownerships = defaultdict(list)
+    for cup_key, owners in cup_owner_counts.items():
+        total = cup_track_totals.get(cup_key)
+        if not total:
+            continue
+        for owner_id, count in owners.items():
+            if count == total:
+                info = cup_entries.get(cup_key)
+                if info:
+                    cup_ownerships[owner_id].append(info)
 
     track_race_count = defaultdict(int)
     track_ownership_changes = defaultdict(int)
     track_defenses = defaultdict(int)
+    player_track_profiles = defaultdict(lambda: defaultdict(lambda: {"wins": 0, "defenses": 0, "attacks": 0}))
+    player_cup_wins = defaultdict(lambda: defaultdict(int))
 
     sweep_rows = db.execute(
         f"""
-        SELECT e.sweep_owner_id
+        SELECT e.sweep_owner_id, e.side_effects_json
         FROM events e
         JOIN tracks t ON t.id = e.track_id
         WHERE t.season IN ({season_clause}) AND e.is_sweep = 1
@@ -636,6 +682,20 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
         ps = ensure_player(sweeper_id)
         if ps:
             ps["sweeps"] += 1
+            side_json = r["side_effects_json"]
+            lock_count = 0
+            if side_json:
+                try:
+                    effects = json.loads(side_json)
+                except Exception:
+                    effects = []
+                if isinstance(effects, list):
+                    for eff in effects:
+                        if not isinstance(eff, dict):
+                            continue
+                        if eff.get("post_state") == 1 and eff.get("pre_state") != 1:
+                            lock_count += 1
+            ps["locks_applied"] += lock_count
 
     event_rows = db.execute(
         f"""
@@ -656,6 +716,8 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
         pre_state = e["pre_state"]
         post_state = e["post_state"]
         pre_threat = e["pre_threatened_by_id"]
+        track_meta = track_info.get(track_id)
+        cup_id = track_meta["cup_id"] if track_meta else None
 
         track_race_count[track_id] += 1
 
@@ -673,6 +735,22 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             winner_stats["current_win_streak"] += 1
             if winner_stats["current_win_streak"] > winner_stats["best_win_streak"]:
                 winner_stats["best_win_streak"] = winner_stats["current_win_streak"]
+            if (
+                pre_owner_id == winner_id
+                and pre_state == 0
+                and post_state == 1
+                and post_owner_id == winner_id
+            ):
+                winner_stats["locks_applied"] += 1
+        if winner_id:
+            profile = player_track_profiles[winner_id][track_id]
+            profile["wins"] += 1
+            if pre_owner_id == winner_id:
+                profile["defenses"] += 1
+            elif pre_owner_id:
+                profile["attacks"] += 1
+            if cup_id:
+                player_cup_wins[winner_id][cup_id] += 1
 
         if pre_owner_stats:
             pre_owner_stats["races_played"] += 1
@@ -725,7 +803,9 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             pre_owner_stats["current_defense_streak"] = 0
 
     for ps in stats.values():
+        pid = ps["id"]
         ps["net_tracks"] = ps["tracks_taken"] - ps["tracks_lost"]
+        ps["cups_owned_count"] = len(cup_ownerships.get(pid, []))
 
         if ps["races_as_owner"] > 0:
             ps["defense_success_rate"] = (
@@ -900,6 +980,83 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
             )
             track_events = events
 
+    def pick_track_detail(player_id: int, metric: str):
+        profile = player_track_profiles.get(player_id)
+        if not profile:
+            return None
+        best_track_id = None
+        best_value_tuple = None
+        for tid, values in profile.items():
+            val = values.get(metric, 0) or 0
+            if val <= 0:
+                continue
+            info = track_info.get(tid)
+            name = info["track_en"] if info else ""
+            key = (val, values.get("wins", 0), name.lower())
+            if best_value_tuple is None or key > best_value_tuple:
+                best_track_id = tid
+                best_value_tuple = key
+        if best_track_id is None:
+            return None
+        best_value = best_value_tuple[0] if best_value_tuple else 0
+        info = track_info.get(best_track_id)
+        if not info:
+            return None
+        return {
+            "track_en": info["track_en"],
+            "track_es": info["track_es"],
+            "cup_en": info["cup_en"],
+            "cup_es": info["cup_es"],
+            "count": best_value,
+        }
+
+    favorite_cups = {}
+    for pid, cup_counts in player_cup_wins.items():
+        best_cup_id = None
+        best_val = 0
+        best_name = ""
+        for cup_id, wins in cup_counts.items():
+            wins = wins or 0
+            info = cup_meta_by_id.get(cup_id)
+            if not info or wins <= 0:
+                continue
+            name = info["cup_en"]
+            candidate = (wins, name.lower())
+            current = (best_val, best_name.lower())
+            if best_cup_id is None or candidate > current:
+                best_cup_id = cup_id
+                best_val = wins
+                best_name = name
+        if best_cup_id:
+            info = cup_meta_by_id.get(best_cup_id)
+            if info:
+                favorite_cups[pid] = {
+                    "cup_en": info["cup_en"],
+                    "cup_es": info["cup_es"],
+                    "wins": best_val,
+                }
+
+    player_spotlights = []
+    for ps in player_stats:
+        pid = ps["id"]
+        owned_cups = sorted(
+            cup_ownerships.get(pid, []),
+            key=lambda c: (c.get("season_id", 0), c.get("cup_en", "")),
+        )
+        player_spotlights.append(
+            {
+                "id": pid,
+                "name": ps["name"],
+                "locks_applied": ps["locks_applied"],
+                "hunter_marks": ps["hunter_marks"],
+                "cups_owned": owned_cups,
+                "best_track": pick_track_detail(pid, "wins"),
+                "most_defended_track": pick_track_detail(pid, "defenses"),
+                "most_attacked_track": pick_track_detail(pid, "attacks"),
+                "favorite_cup": favorite_cups.get(pid),
+            }
+        )
+
     def build_cell(player_row, descriptor):
         if descriptor["type"] == "value":
             val = player_row.get(descriptor["value_key"], 0) or 0
@@ -957,6 +1114,7 @@ def compute_stats_data(db, season_ids, sort_metric_id="wins", selected_track_id=
         "track_events": track_events,
         "metric_rows": metric_rows,
         "streak_badges": streak_badges,
+        "player_spotlights": player_spotlights,
         "track_insights_enabled": allow_track_insights,
     }
 
@@ -2148,10 +2306,10 @@ def stats_page():
         "stats.html",
         db,
         season_label=season_label,
-        metric_sort_options=METRIC_DEFS,
         selected_sort=sort_metric_id,
         season_options=season_options,
         selected_season=selected_option,
+        selected_track_id=track_param,
         page_title="Koopa Krew - Stats",
         **stats_data,
     )

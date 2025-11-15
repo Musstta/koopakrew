@@ -343,9 +343,69 @@ class AppModuleTests(AppTestCase):
             sergio_stats = next(p for p in context["player_stats"] if p["name"] == "Sergio")
             self.assertEqual(salim_stats["wins_as_owner"], 1)
             self.assertGreaterEqual(sergio_stats["tracks_taken"], 1)
+            self.assertGreaterEqual(salim_stats["locks_applied"], 1)
             self.assertTrue(context["track_insights_enabled"])
             self.assertEqual(len(context["metric_rows"]), len(app.METRIC_DEFS))
+            self.assertEqual(len(context["player_spotlights"]), len(context["player_stats"]))
+            self.assertIn("hot_hand", context["streak_badges"])
+            metric_ids = {row["id"] for row in context["metric_rows"]}
+            self.assertIn("best_win_streak", metric_ids)
+            self.assertIn("best_defense_streak", metric_ids)
 
+    def test_stats_page_reports_cups_owned_and_spotlights(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        fabian_id = ctx["players"]["Fabian"]
+        season_id = ctx["season_id"]
+        track_blank = ctx["tracks"]["blank"]
+        track_owned = ctx["tracks"]["owned"]
+        with app.app.app_context():
+            db = app.get_db()
+            extra_sergio = db.execute(
+                """
+                INSERT INTO tracks
+                    (code, cup_id, en, es, order_in_cup, owner_id, state, threatened_by_id, season)
+                VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?)
+                """,
+                ("ECHO", ctx["cup_id"], "Echo Run", "Pista Eco", 3, sergio_id, season_id),
+            ).lastrowid
+            extra_blank = db.execute(
+                """
+                INSERT INTO tracks
+                    (code, cup_id, en, es, order_in_cup, owner_id, state, threatened_by_id, season)
+                VALUES (?, ?, ?, ?, ?, NULL, 0, NULL, ?)
+                """,
+                ("DELTA", ctx["cup_id"], "Delta Ridge", "Cresta Delta", 4, season_id),
+            ).lastrowid
+            # Salim claims the remaining tracks and steals Sergio's to trigger a lock sweep.
+            app.apply_result(db, season_id, track_blank, salim_id)
+            app.apply_result(db, season_id, extra_blank, salim_id)
+            app.apply_result(db, season_id, extra_sergio, salim_id)
+            app.apply_result(db, season_id, extra_sergio, salim_id)
+            # Sergio pressures one of the locked tracks so Salim can defend it.
+            app.apply_result(db, season_id, extra_blank, sergio_id)
+            app.apply_result(db, season_id, extra_blank, sergio_id)
+            app.apply_result(db, season_id, extra_blank, salim_id)
+            # Fabian takes a swing to ensure multiple challengers appear in stats.
+            app.apply_result(db, season_id, track_owned, fabian_id)
+            app.apply_result(db, season_id, track_owned, salim_id)
+        with captured_templates(app.app) as templates:
+            resp = client.get("/stats")
+            self.assertEqual(resp.status_code, 200)
+            _, context = templates[0]
+            salim_stats = next(p for p in context["player_stats"] if p["name"] == "Salim")
+            sergio_stats = next(p for p in context["player_stats"] if p["name"] == "Sergio")
+            self.assertGreaterEqual(salim_stats["locks_applied"], 1)
+            self.assertGreaterEqual(salim_stats["cups_owned_count"], 1)
+            self.assertGreaterEqual(sergio_stats["hunter_marks"], 1)
+            cards = {p["name"]: p for p in context["player_spotlights"]}
+            salim_card = cards["Salim"]
+            self.assertTrue(salim_card["cups_owned"])
+            self.assertIsNotNone(salim_card["best_track"])
+            self.assertIsNotNone(salim_card["most_attacked_track"])
+            self.assertIsNotNone(salim_card["most_defended_track"])
+            self.assertIsNotNone(salim_card["favorite_cup"])
     def test_stats_page_filters_inactive_only_for_current(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
