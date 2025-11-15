@@ -22,9 +22,6 @@
       {% endif %}
     {% endif %}
   </div>
-  <button class="filter-toggle-trigger" type="button" data-filter-toggle aria-expanded="false" aria-controls="filter-panel" aria-label="{{ _('Toggle filters and search') }}">
-    🔍
-  </button>
 </div>
 
 <div class="player-modal-overlay" data-player-modal-overlay hidden></div>
@@ -49,66 +46,6 @@
     <small data-player-modal-capture-cup></small><br>
     <small data-player-modal-capture-date></small>
   </div>
-</div>
-
-<form method="get" class="totals filter-form" id="filter-panel" data-filter-panel data-open-default="{{ 'true' if filtering else 'false' }}" hidden>
-  <div class="filter-bar-header">
-    <strong>{{ _('Filters & search') }}</strong>
-    <button class="btn icon ghost close-filter" type="button" data-filter-close aria-label="{{ _('Close filters') }}">×</button>
-  </div>
-  <div class="filter-owner-group">
-    <label>
-      {{ _("Owner") }}
-      <select id="owner" name="owner">
-        <option value="all" {{ "selected" if selected_filters.owner == "all" else "" }}>{{ _("All") }}</option>
-        {% for p in players %}
-          <option value="{{ p }}" {{ "selected" if selected_filters.owner == p else "" }}>{{ p }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </div>
-  <label>
-    {{ _("Cup") }}
-    <select id="cup" name="cup">
-      <option value="all" {{ "selected" if selected_filters.cup == "all" else "" }}>{{ _("All") }}</option>
-      {% for c in cups %}
-        <option value="{{ c.code }}" {{ "selected" if selected_filters.cup == c.code else "" }}>
-          {% if current_lang == 'es' %}
-            {{ c.es }} ({{ c.en }})
-          {% else %}
-            {{ c.en }} ({{ c.es }})
-          {% endif %}
-        </option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>
-    {{ _("State") }}
-    <select id="state" name="state">
-      <option value="any" {{ "selected" if selected_filters.state == "any" else "" }}>{{ _("Any") }}</option>
-      <option value="locked" {{ "selected" if selected_filters.state == "locked" else "" }}>{{ _("Locked") }}</option>
-      <option value="default" {{ "selected" if selected_filters.state == "default" else "" }}>{{ _("Default") }}</option>
-      <option value="at-risk" {{ "selected" if selected_filters.state in ["at-risk","atrisk","at_risk"] else "" }}>{{ _("At risk") }}</option>
-    </select>
-  </label>
-  <div class="filter-actions">
-    <button class="btn" type="submit">{{ _("Apply") }}</button>
-    <a class="btn" href="{{ url_for('index') }}">{{ _("Reset") }}</a>
-  </div>
-  <div class="quick-search-panel" id="quick-search-panel">
-    <label>
-      {{ _("Quick search (track or cup)") }}
-      <input type="search" id="track-search" placeholder="{{ _('e.g. Senda Arcoiris / Rainbow Road') }}">
-    </label>
-    <small>{{ _("Search matches English or Spanish names instantly on this page.") }}</small>
-  </div>
-</form>
-
-<div class="undo-inline">
-  <form method="post" action="{{ url_for('undo') }}" data-undo-form>
-    <input type="hidden" name="next" value="{{ request.full_path or url_for('index') }}">
-    <button type="submit">↩️ {{ _('Undo last change') }}</button>
-  </form>
 </div>
 
 {% set top_overall = totals_overall[:4] if totals_overall else [] %}
@@ -253,6 +190,79 @@
   {% endif %}
 </div>
 
+<div class="standings-controls">
+  <div class="standings-controls-bar">
+    <div class="controls-heading">
+      <strong>{{ _('Filters & search') }}</strong>
+      <small>{{ _('Search matches English or Spanish names instantly on this page.') }}</small>
+    </div>
+    <div class="standings-controls-actions">
+      <button class="filter-toggle-trigger" type="button" data-filter-toggle aria-expanded="false" aria-controls="filter-panel" aria-label="{{ _('Toggle filters and search') }}">
+        🔍
+      </button>
+      <div class="undo-inline">
+        <form method="post" action="{{ url_for('undo') }}" data-undo-form>
+          <input type="hidden" name="next" value="{{ request.full_path or url_for('index') }}">
+          <button type="submit">↩️ {{ _('Undo last change') }}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <form method="get" class="totals filter-form" id="filter-panel" data-filter-panel data-open-default="{{ 'true' if filtering else 'false' }}" hidden>
+    <div class="filter-bar-header">
+      <strong>{{ _('Filters & search') }}</strong>
+      <button class="btn icon ghost close-filter" type="button" data-filter-close aria-label="{{ _('Close filters') }}">×</button>
+    </div>
+    <div class="filter-owner-group">
+      <label>
+        {{ _("Owner") }}
+        <select id="owner" name="owner">
+          <option value="all" {{ "selected" if selected_filters.owner == "all" else "" }}>{{ _("All") }}</option>
+          {% for p in players %}
+            <option value="{{ p }}" {{ "selected" if selected_filters.owner == p else "" }}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <label>
+      {{ _("Cup") }}
+      <select id="cup" name="cup">
+        <option value="all" {{ "selected" if selected_filters.cup == "all" else "" }}>{{ _("All") }}</option>
+        {% for c in cups %}
+          <option value="{{ c.code }}" {{ "selected" if selected_filters.cup == c.code else "" }}>
+            {% if current_lang == 'es' %}
+              {{ c.es }} ({{ c.en }})
+            {% else %}
+              {{ c.en }} ({{ c.es }})
+            {% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      {{ _("State") }}
+      <select id="state" name="state">
+        <option value="any" {{ "selected" if selected_filters.state == "any" else "" }}>{{ _("Any") }}</option>
+        <option value="locked" {{ "selected" if selected_filters.state == "locked" else "" }}>{{ _("Locked") }}</option>
+        <option value="default" {{ "selected" if selected_filters.state == "default" else "" }}>{{ _("Default") }}</option>
+        <option value="at-risk" {{ "selected" if selected_filters.state in ["at-risk","atrisk","at_risk"] else "" }}>{{ _("At risk") }}</option>
+      </select>
+    </label>
+    <div class="filter-actions">
+      <button class="btn" type="submit">{{ _("Apply") }}</button>
+      <a class="btn" href="{{ url_for('index') }}">{{ _("Reset") }}</a>
+    </div>
+    <div class="quick-search-panel" id="quick-search-panel">
+      <label>
+        {{ _("Quick search (track or cup)") }}
+        <input type="search" id="track-search" placeholder="{{ _('e.g. Senda Arcoiris / Rainbow Road') }}">
+      </label>
+      <small>{{ _("Search matches English or Spanish names instantly on this page.") }}</small>
+    </div>
+  </form>
+</div>
+
 <div class="cup-controls">
   <div class="cup-controls-actions">
     <button class="btn" type="button" data-expand-toggle aria-pressed="false" data-expand-text="{{ _('Expand all') }}" data-collapse-text="{{ _('Minimize all') }}">{{ _("Expand all") }}</button>
@@ -297,6 +307,7 @@
       id="cup-panel-{{ cup.cup_code }}"
       data-cup-panel
       data-cup-code="{{ cup.cup_code }}"
+      data-cup-index="{{ loop.index0 }}"
       data-cup-label="{{ cup.cup_en }} {{ cup.cup_es }}">
       <div class="cup-panel-header">
         <div class="cup-logo">
@@ -373,7 +384,6 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('track-search');
-    const quickSearchPanel = document.getElementById('quick-search-panel');
     const cards = Array.from(document.querySelectorAll('.track-card'));
     const grid = document.querySelector('[data-cup-grid]');
     const panels = Array.from(document.querySelectorAll('[data-cup-panel]'));
@@ -394,6 +404,10 @@
       filterPanel.hidden = !open;
       filterToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       filterToggle.classList.toggle('active', open);
+      if (!open && searchInput && (searchInput.value || '').trim()) {
+        searchInput.value = '';
+        applyFilter();
+      }
     };
     if (filterPanel && filterPanel.dataset.openDefault === 'true') {
       setFilterOpen(true);
@@ -416,6 +430,14 @@
       button.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
+    const getNextElementSibling = (node) => {
+      let current = node?.nextSibling || null;
+      while (current && current.nodeType !== Node.ELEMENT_NODE) {
+        current = current.nextSibling;
+      }
+      return current;
+    };
+
     const ensurePanelPlacement = (code) => {
       if (!grid) return null;
       const panel = panelMap.get(code);
@@ -423,17 +445,35 @@
       if (!panel || !button) return panel;
       const currentButtons = Array.from(grid.querySelectorAll('[data-cup-button]'));
       const index = currentButtons.indexOf(button);
+      if (index === -1) return panel;
       let anchor = button;
       const rowTop = button.offsetTop;
       for (let i = index + 1; i < currentButtons.length; i++) {
-        if (currentButtons[i].offsetTop === rowTop) {
-          anchor = currentButtons[i];
+        const nextBtn = currentButtons[i];
+        if (nextBtn.offsetTop === rowTop) {
+          anchor = nextBtn;
         } else {
           break;
         }
       }
-      if (panel.parentElement !== grid || panel.previousSibling !== anchor) {
-        grid.insertBefore(panel, anchor.nextSibling);
+      const panelIndex = Number(button.dataset.cupIndex || panel.dataset.cupIndex || 0);
+      let insertTarget = getNextElementSibling(anchor);
+      let inserted = false;
+      while (insertTarget && insertTarget.hasAttribute?.('data-cup-panel')) {
+        const siblingButton = buttonMap.get(insertTarget.dataset.cupCode);
+        if (!siblingButton || siblingButton.offsetTop !== rowTop) {
+          break;
+        }
+        const siblingIndex = Number(insertTarget.dataset.cupIndex || siblingButton.dataset.cupIndex || 0);
+        if (panelIndex < siblingIndex) {
+          grid.insertBefore(panel, insertTarget);
+          inserted = true;
+          break;
+        }
+        insertTarget = getNextElementSibling(insertTarget);
+      }
+      if (!inserted) {
+        grid.insertBefore(panel, insertTarget || anchor.nextSibling);
       }
       return panel;
     };
@@ -506,7 +546,7 @@
       });
     });
 
-    const applyFilter = () => {
+    function applyFilter() {
       const term = (searchInput?.value || '').trim().toLowerCase();
       cards.forEach(card => {
         const match = !term || card.dataset.searchText.includes(term);
@@ -516,9 +556,6 @@
         const visibleTracks = panel.querySelectorAll('.track-card:not(.search-hidden)').length;
         const button = buttonMap.get(panel.dataset.cupCode);
         const hasMatch = term && visibleTracks > 0;
-        if (hasMatch) {
-          ensurePanelPlacement(panel.dataset.cupCode);
-        }
         panel.classList.toggle('search-hidden', term && visibleTracks === 0);
         panel.classList.toggle('search-open', !!hasMatch);
         if (!term) {
@@ -528,7 +565,26 @@
           button.classList.toggle('search-match', !!hasMatch);
         }
       });
-    };
+    }
+
+    function scrollToFirstMatch() {
+      const firstPanel = panels.find(panel => {
+        if (panel.classList.contains('search-hidden')) return false;
+        return panel.querySelector('.track-card:not(.search-hidden)');
+      });
+      if (firstPanel) {
+        const code = firstPanel.dataset.cupCode;
+        if (code) {
+          setPanelOpen(code, true);
+        }
+        firstPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      const firstCard = cards.find(card => !card.classList.contains('search-hidden'));
+      if (firstCard) {
+        firstCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
 
     if (filtersActive) {
       setMultiOpen(true);
@@ -538,6 +594,15 @@
 
     if (searchInput) {
       searchInput.addEventListener('input', applyFilter);
+      searchInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          const term = (searchInput.value || '').trim();
+          if (!term) return;
+          event.preventDefault();
+          applyFilter();
+          scrollToFirstMatch();
+        }
+      });
     }
 
     document.querySelectorAll('[data-track-card]').forEach(card => {

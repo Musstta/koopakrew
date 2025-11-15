@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
-from flask import template_rendered
+from flask import template_rendered, g
 
 import app
 import db_init
@@ -130,6 +130,56 @@ class AppTestCase(unittest.TestCase):
 
 
 class AppModuleTests(AppTestCase):
+    def _track_snapshot(self, db, track_id):
+        return db.execute(
+            "SELECT owner_id, state, threatened_by_id FROM tracks WHERE id = ?",
+            (track_id,),
+        ).fetchone()
+
+    def _create_test_cup(self, db, season_id, owner_id, challenger_id):
+        cup_code = f"TST{uuid4().hex[:5]}"
+        cup_id = db.execute(
+            'INSERT INTO cups (code, en, es, "order") VALUES (?, ?, ?, ?)',
+            (cup_code, "Test Cup", "Copa Test", 999),
+        ).lastrowid
+        tracks = []
+        for idx in range(4):
+            code = f"{cup_code}_T{idx}"
+            state = 0
+            threatened = None
+            owner = None
+            if idx == 0:
+                owner = owner_id
+                state = 0
+            elif idx == 1:
+                owner = owner_id
+                state = -1
+                threatened = challenger_id
+            elif idx == 2:
+                owner = owner_id
+                state = 1
+            track_id = db.execute(
+                """
+                INSERT INTO tracks
+                    (code, cup_id, en, es, order_in_cup, owner_id, state, threatened_by_id, season)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    code,
+                    cup_id,
+                    f"Test Track {idx}",
+                    f"Pista Test {idx}",
+                    idx + 1,
+                    owner,
+                    state,
+                    threatened,
+                    season_id,
+                ),
+            ).lastrowid
+            tracks.append(track_id)
+        db.commit()
+        return cup_id, tracks
+
     def test_season_autocreation_clones_tracks(self):
         _, ctx, _ = self.bootstrap(seed_template_season)
         with app.app.app_context():
@@ -172,6 +222,101 @@ class AppModuleTests(AppTestCase):
             self.assertIsNone(row["owner_id"])
             event_count_after = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
             self.assertEqual(event_count_after, 0)
+
+    def test_track_state_full_lifecycle(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, salim_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["owner_id"], salim_id)
+            self.assertEqual(snap["state"], 0)
+            app.apply_result(db, season_id, track_id, salim_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["state"], 1)
+            app.apply_result(db, season_id, track_id, sergio_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["owner_id"], salim_id)
+            self.assertEqual(snap["state"], 0)
+            events = db.execute(
+                """
+                SELECT pre_owner_id, pre_state, post_owner_id, post_state
+                FROM events WHERE track_id = ? ORDER BY id ASC
+                """,
+                (track_id,),
+            ).fetchall()
+            self.assertEqual(len(events), 3)
+            self.assertEqual(events[0]["pre_owner_id"], None)
+            self.assertEqual(events[1]["pre_state"], 0)
+            self.assertEqual(events[2]["pre_state"], 1)
+
+    def test_state_machine_at_risk_defense(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["owned"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, sergio_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["state"], -1)
+            self.assertEqual(snap["owner_id"], salim_id)
+            self.assertEqual(snap["threatened_by_id"], sergio_id)
+            app.apply_result(db, season_id, track_id, salim_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["state"], 0)
+            self.assertEqual(snap["owner_id"], salim_id)
+            self.assertIsNone(snap["threatened_by_id"])
+
+    def test_state_machine_at_risk_theft(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        fabian_id = ctx["players"]["Fabian"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["owned"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, sergio_id)
+            app.apply_result(db, season_id, track_id, fabian_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["owner_id"], fabian_id)
+            self.assertEqual(snap["state"], 0)
+            self.assertIsNone(snap["threatened_by_id"])
+
+    def test_state_machine_multi_race_sequence(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        fabian_id = ctx["players"]["Fabian"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, salim_id)  # claim
+            app.apply_result(db, season_id, track_id, salim_id)  # lock
+            app.apply_result(db, season_id, track_id, sergio_id)  # break lock
+            app.apply_result(db, season_id, track_id, fabian_id)  # set at risk
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["state"], -1)
+            self.assertEqual(snap["threatened_by_id"], fabian_id)
+            app.apply_result(db, season_id, track_id, salim_id)  # defend
+            app.apply_result(db, season_id, track_id, sergio_id)  # at risk again
+            app.apply_result(db, season_id, track_id, fabian_id)  # steal
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["owner_id"], fabian_id)
+            self.assertEqual(snap["state"], 0)
+            self.assertIsNone(snap["threatened_by_id"])
+            event_rows = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?",
+                (track_id,),
+            ).fetchone()
+            self.assertEqual(event_rows["n"], 7)
 
     def test_stats_page_context(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
@@ -572,6 +717,327 @@ class AppModuleTests(AppTestCase):
         body = resp.get_data(as_text=True)
         self.assertNotIn("Time Cup", body)
         self.assertIn("Alpha Course", body)
+
+    def test_sweep_locks_mixed_states(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        with app.app.app_context():
+            db = app.get_db()
+            cup_id, tracks = self._create_test_cup(db, season_id, salim_id, sergio_id)
+            app.apply_result(db, season_id, tracks[3], salim_id)
+            states = [
+                self._track_snapshot(db, tid)
+                for tid in tracks
+            ]
+            for snap in states:
+                self.assertEqual(snap["state"], 1)
+                self.assertIsNone(snap["threatened_by_id"])
+            sweep_events = db.execute(
+                "SELECT * FROM events WHERE track_id = ? ORDER BY id ASC",
+                (tracks[3],),
+            ).fetchall()
+            self.assertEqual(len(sweep_events), 2)
+            self.assertEqual(sweep_events[1]["is_sweep"], 1)
+            side = json.loads(sweep_events[1]["side_effects_json"])
+            track_ids = {item["track_id"] for item in side}
+            self.assertIn(tracks[0], track_ids)
+            self.assertIn(tracks[1], track_ids)
+            self.assertIn(tracks[3], track_ids)
+            self.assertNotIn(tracks[2], track_ids)
+
+    def test_sweep_undo_restores_states(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        with app.app.app_context():
+            db = app.get_db()
+            _, tracks = self._create_test_cup(db, season_id, salim_id, sergio_id)
+            app.apply_result(db, season_id, tracks[3], salim_id)
+            app.undo_last_event(db)
+            snap1 = self._track_snapshot(db, tracks[0])
+            snap2 = self._track_snapshot(db, tracks[1])
+            snap3 = self._track_snapshot(db, tracks[2])
+            snap4 = self._track_snapshot(db, tracks[3])
+            self.assertEqual((snap1["state"], snap1["owner_id"]), (0, salim_id))
+            self.assertEqual((snap2["state"], snap2["threatened_by_id"]), (-1, sergio_id))
+            self.assertEqual(snap3["state"], 1)
+            self.assertEqual(snap4["state"], 0)
+            app.undo_last_event(db)
+            snap4 = self._track_snapshot(db, tracks[3])
+            self.assertIsNone(snap4["owner_id"])
+            self.assertEqual(snap4["state"], 0)
+
+    def test_sweep_near_miss_no_event(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        with app.app.app_context():
+            db = app.get_db()
+            _, tracks = self._create_test_cup(db, season_id, salim_id, sergio_id)
+            for tid in tracks[:3]:
+                db.execute(
+                    "UPDATE tracks SET owner_id = ?, state = 0, threatened_by_id = NULL WHERE id = ?",
+                    (salim_id, tid),
+                )
+            db.commit()
+            before_events = db.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+            app.apply_result(db, season_id, tracks[3], sergio_id)
+            after_events = db.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+            self.assertEqual(after_events, before_events + 1)
+            sweeps = db.execute("SELECT COUNT(*) AS n FROM events WHERE is_sweep = 1").fetchone()["n"]
+            self.assertEqual(sweeps, 0)
+            snap = self._track_snapshot(db, tracks[3])
+            self.assertEqual(snap["owner_id"], sergio_id)
+            owned = db.execute(
+                "SELECT COUNT(*) AS n FROM tracks WHERE cup_id = (SELECT cup_id FROM tracks WHERE id = ?) AND owner_id = ?",
+                (tracks[0], salim_id),
+            ).fetchone()["n"]
+            self.assertEqual(owned, 3)
+
+    def test_undo_multiple_events(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        fabian_id = ctx["players"]["Fabian"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        winners = [salim_id, sergio_id, fabian_id, salim_id, sergio_id]
+        with app.app.app_context():
+            db = app.get_db()
+            snapshots = []
+            for winner in winners:
+                snapshots.append(self._track_snapshot(db, track_id))
+                app.apply_result(db, season_id, track_id, winner)
+            total_events = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            self.assertEqual(total_events, len(winners))
+            while snapshots:
+                expected = snapshots.pop()
+                app.undo_last_event(db)
+                snap = self._track_snapshot(db, track_id)
+                self.assertEqual(
+                    (snap["owner_id"], snap["state"], snap["threatened_by_id"]),
+                    (expected["owner_id"], expected["state"], expected["threatened_by_id"]),
+                )
+            remaining = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            self.assertEqual(remaining, 0)
+
+    def test_undo_handles_malformed_side_effects(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            db.execute(
+                """
+                INSERT INTO events
+                    (track_id, winner_id, occurred_at,
+                     pre_owner_id, pre_state, pre_threatened_by_id,
+                     post_owner_id, post_state, post_threatened_by_id,
+                     side_effects_json, is_sweep)
+                VALUES (?, NULL, '2025-01-01T00:00:00', NULL, 0, NULL, NULL, 0, NULL, '{invalid', 0)
+                """,
+                (track_id,),
+            )
+            db.commit()
+            result = app.undo_last_event(db)
+            self.assertTrue(result)
+            remaining = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            self.assertEqual(remaining, 0)
+
+    def test_race_submission_with_inactive_player_rejected(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        track_id = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            db.execute("UPDATE players SET active = 0 WHERE id = ?", (salim_id,))
+            db.commit()
+        resp = client.post(
+            f"/update/{track_id}",
+            data={"winner": "Salim"},
+            follow_redirects=True,
+        )
+        self.assertEqual(resp.status_code, 200)
+        with app.app.app_context():
+            db = app.get_db()
+            snapshot = self._track_snapshot(db, track_id)
+            self.assertIsNone(snapshot["owner_id"])
+            count = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            self.assertEqual(count, 0)
+
+    def test_deactivate_player_bulk_tracks(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        with app.app.app_context():
+            db = app.get_db()
+            for _ in range(3):
+                _, tracks = self._create_test_cup(db, season_id, salim_id, sergio_id)
+                for tid in tracks:
+                    db.execute(
+                        "UPDATE tracks SET owner_id = ?, state = 0, threatened_by_id = NULL WHERE id = ?",
+                        (salim_id, tid),
+                    )
+            db.commit()
+            before_owned = db.execute(
+                "SELECT COUNT(*) AS n FROM tracks WHERE owner_id = ?",
+                (salim_id,),
+            ).fetchone()["n"]
+            db.commit()
+            self.assertTrue(app.deactivate_player(db, salim_id))
+            remaining = db.execute(
+                "SELECT COUNT(*) AS n FROM tracks WHERE owner_id = ?",
+                (salim_id,),
+            ).fetchone()["n"]
+            self.assertEqual(remaining, 0)
+            payload = json.loads(
+                db.execute("SELECT side_effects_json FROM events ORDER BY id DESC LIMIT 1").fetchone()["side_effects_json"]
+            )
+            self.assertEqual(len(payload["tracks"]), before_owned)
+            app.undo_last_event(db)
+            restored = db.execute(
+                "SELECT COUNT(*) AS n FROM tracks WHERE owner_id = ?",
+                (salim_id,),
+            ).fetchone()["n"]
+            self.assertEqual(restored, before_owned)
+
+    def test_deactivate_player_restores_at_risk(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["owned"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, sergio_id)
+            self.assertTrue(app.deactivate_player(db, salim_id))
+            snap = self._track_snapshot(db, track_id)
+            self.assertIsNone(snap["owner_id"])
+            self.assertEqual(snap["state"], 0)
+            self.assertIsNone(snap["threatened_by_id"])
+            app.undo_last_event(db)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["state"], -1)
+            self.assertEqual(snap["threatened_by_id"], sergio_id)
+
+    def test_race_after_deactivation_claims_track(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["owned"]
+        with app.app.app_context():
+            db = app.get_db()
+            self.assertTrue(app.deactivate_player(db, salim_id))
+            app.apply_result(db, season_id, track_id, sergio_id)
+            snap = self._track_snapshot(db, track_id)
+            self.assertEqual(snap["owner_id"], sergio_id)
+            self.assertEqual(snap["state"], 0)
+
+    def test_auto_season_clone_integrity(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        with app.app.app_context():
+            db = app.get_db()
+            future = date.today() + timedelta(days=120)
+            season_row = app.create_season_for_today(db, future)
+            new_id = season_row["id"]
+            tracks = db.execute(
+                "SELECT * FROM tracks WHERE season = ? ORDER BY cup_id, order_in_cup",
+                (new_id,),
+            ).fetchall()
+            self.assertGreater(len(tracks), 0)
+            for row in tracks:
+                self.assertIsNone(row["owner_id"])
+                self.assertEqual(row["state"], 0)
+                self.assertIsNone(row["threatened_by_id"])
+            originals = {
+                (r["cup_id"], r["order_in_cup"], r["code"])
+                for r in db.execute("SELECT cup_id, order_in_cup, code FROM tracks WHERE season != ?", (new_id,)).fetchall()
+            }
+            for row in tracks:
+                self.assertIn((row["cup_id"], row["order_in_cup"], row["code"]), originals)
+
+    def test_stats_page_empty_new_season(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        with app.app.app_context():
+            db = app.get_db()
+            future = date.today() + timedelta(days=200)
+            season_row = app.create_season_for_today(db, future)
+            new_id = season_row["id"]
+        with captured_templates(app.app) as templates:
+            resp = client.get(f"/stats?season={new_id}")
+            self.assertEqual(resp.status_code, 200)
+            _, context = templates[0]
+            for ps in context["player_stats"]:
+                self.assertEqual(ps["wins"], 0)
+                self.assertEqual(ps["tracks_owned"], 0)
+
+    def test_cross_season_isolation(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, salim_id)
+            future = date.today() + timedelta(days=260)
+            second = app.create_season_for_today(db, future)
+        with captured_templates(app.app) as templates:
+            resp = client.get(f"/stats?season={second['id']}")
+            self.assertEqual(resp.status_code, 200)
+            _, context = templates[0]
+            for ps in context["player_stats"]:
+                self.assertEqual(ps["wins"], 0)
+        resp = client.get(f"/events?season={second['id']}")
+        self.assertIn("No events yet", resp.get_data(as_text=True))
+
+    def test_win_streak_recomputes_after_undo(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        salim_id = ctx["players"]["Salim"]
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        with app.app.app_context():
+            db = app.get_db()
+            for _ in range(5):
+                app.apply_result(db, season_id, track_id, salim_id)
+            streaks = app.compute_player_streaks(db, season_id)
+            self.assertEqual(streaks[salim_id]["current_win_streak"], 5)
+            app.undo_last_event(db)
+            streaks = app.compute_player_streaks(db, season_id)
+            self.assertEqual(streaks[salim_id]["current_win_streak"], 4)
+            for _ in range(4):
+                app.undo_last_event(db)
+            streaks = app.compute_player_streaks(db, season_id)
+            self.assertEqual(streaks.get(salim_id, {}).get("current_win_streak", 0), 0)
+
+    def test_update_invalid_track_returns_404(self):
+        client, _, _ = self.bootstrap(seed_active_environment)
+        resp = client.get("/update/999999")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_language_switch_persists_between_pages(self):
+        client, _, _ = self.bootstrap(seed_active_environment)
+        resp = client.get("/?lang=es", follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        resp = client.get("/stats")
+        self.assertIn('class="active">ES', resp.get_data(as_text=True))
+        with client.session_transaction() as sess:
+            sess.clear()
+        resp = client.get("/stats")
+        self.assertIn("Season stats", resp.get_data(as_text=True))
+
+    def test_translate_text_preserves_placeholders(self):
+        with app.app.app_context():
+            g.current_lang = "es"
+            text = "Player {name} won {count} races"
+            translated = app.translate_text(text)
+            self.assertIn("{name}", translated)
+            self.assertIn("{count}", translated)
 
 
 if __name__ == "__main__":
