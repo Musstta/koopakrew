@@ -1,9 +1,12 @@
 import json
+import sqlite3
 import tempfile
+import time
 import unittest
 from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
+from threading import Thread
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -825,6 +828,90 @@ class AppModuleTests(AppTestCase):
             remaining = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
             self.assertEqual(remaining, 0)
 
+    def test_concurrent_race_submissions_documented(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        winners = [ctx["players"]["Salim"], ctx["players"]["Sergio"]]
+        errors = []
+
+        def run_race(winner):
+            with app.app.app_context():
+                db = app.get_db()
+                try:
+                    app.apply_result(db, season_id, track_id, winner)
+                except sqlite3.OperationalError:
+                    errors.append("OperationalError")
+
+        threads = [Thread(target=run_race, args=(winner,)) for winner in winners]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        with app.app.app_context():
+            db = app.get_db()
+            count = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?",
+                (track_id,),
+            ).fetchone()["n"]
+            snap = self._track_snapshot(db, track_id)
+        self.assertTrue(count in (1, 2))
+        if errors:
+            self.assertEqual(errors, ["OperationalError"])
+            self.assertEqual(count, 1)
+        else:
+            self.assertEqual(count, 2)
+            self.assertEqual(snap["owner_id"], winners[-1])
+
+    def test_undo_during_race_submission_documented(self):
+        _, ctx, _ = self.bootstrap(seed_active_environment)
+        season_id = ctx["season_id"]
+        track_id = ctx["tracks"]["blank"]
+        salim_id = ctx["players"]["Salim"]
+        sergio_id = ctx["players"]["Sergio"]
+        with app.app.app_context():
+            db = app.get_db()
+            app.apply_result(db, season_id, track_id, salim_id)
+        errors = []
+
+        def race():
+            time.sleep(0.01)
+            with app.app.app_context():
+                db = app.get_db()
+                try:
+                    app.apply_result(db, season_id, track_id, sergio_id)
+                except sqlite3.OperationalError:
+                    errors.append("OperationalError")
+
+        def undo():
+            with app.app.app_context():
+                db = app.get_db()
+                try:
+                    app.undo_last_event(db)
+                except sqlite3.OperationalError:
+                    errors.append("OperationalError")
+
+        threads = [Thread(target=race), Thread(target=undo)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        with app.app.app_context():
+            db = app.get_db()
+            count = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?",
+                (track_id,),
+            ).fetchone()["n"]
+            snap = self._track_snapshot(db, track_id)
+        self.assertTrue(count in (0, 1))
+        self.assertLessEqual(len(errors), 1)
+        if count == 0:
+            self.assertIsNone(snap["owner_id"])
+        else:
+            self.assertIn(snap["owner_id"], {salim_id, sergio_id})
+
     def test_undo_handles_malformed_side_effects(self):
         _, ctx, _ = self.bootstrap(seed_active_environment)
         season_id = ctx["season_id"]
@@ -1038,6 +1125,20 @@ class AppModuleTests(AppTestCase):
             translated = app.translate_text(text)
             self.assertIn("{name}", translated)
             self.assertIn("{count}", translated)
+
+    def test_archive_missing_csv_graceful(self):
+        client, _, _ = self.bootstrap(seed_active_environment)
+        original_exists = app.os.path.exists
+
+        def fake_exists(path):
+            if path.endswith("MK8TracksSeason1.csv"):
+                return False
+            return original_exists(path)
+
+        with patch("app.os.path.exists", side_effect=fake_exists):
+            resp = client.get("/archive")
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("Season archive", resp.get_data(as_text=True))
 
 
 if __name__ == "__main__":
