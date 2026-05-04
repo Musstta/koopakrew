@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime
 from pathlib import Path
@@ -122,6 +123,14 @@ def create_app(config_obj=None):
             return local.strftime("%b %-d, %Y — %-I:%M %p")
         except Exception:
             return value
+
+    # CSS cache-busting version
+    _css_path = BASE_DIR / "static" / "css" / "app.css"
+    if _css_path.exists():
+        _css_hash = hashlib.md5(_css_path.read_bytes()).hexdigest()[:10]
+    else:
+        _css_hash = "1"
+    app.config["CSS_VERSION"] = _css_hash
 
     # Blueprints & route aliases
     app.register_blueprint(main_bp)

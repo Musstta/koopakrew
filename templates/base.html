@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="Koopa Krew">
   <link rel="manifest" href="{{ url_for('static', filename='images/site.webmanifest') }}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ config.CSS_VERSION }}">
 
 </head>
 <body data-default-player-id="{{ default_player.id if default_player else '' }}">
@@ -50,13 +50,13 @@
       </div>
     </div>
     <nav class="drawer-nav">
-    <a class="btn" href="{{ url_for('index') }}">{{ _('Standings') }}</a>
-    <a class="btn" href="{{ url_for('events_log') }}">{{ _('Events') }}</a>
-    <a class="btn" href="{{ url_for('stats_page') }}">{{ _('Stats') }}</a>
-    <a class="btn" href="{{ url_for('track_stats_page') }}">{{ _('Track Stats') }}</a>
-    <a class="btn" href="{{ url_for('rules_page') }}">{{ _('Rules') }}</a>
-    <a class="btn" href="{{ url_for('archive_page') }}">{{ _('Archive') }}</a>
-    <a class="btn" href="{{ url_for('admin_players') }}">{{ _('Players') }}</a>
+    <a class="btn{% if request.endpoint in ('index', 'main.index') %} nav-active{% endif %}" href="{{ url_for('index') }}">{{ _('Standings') }}</a>
+    <a class="btn{% if request.endpoint in ('events_log', 'main.events_log') %} nav-active{% endif %}" href="{{ url_for('events_log') }}">{{ _('Events') }}</a>
+    <a class="btn{% if request.endpoint in ('stats_page', 'main.stats_page') %} nav-active{% endif %}" href="{{ url_for('stats_page') }}">{{ _('Stats') }}</a>
+    <a class="btn{% if request.endpoint in ('track_stats_page', 'main.track_stats_page') %} nav-active{% endif %}" href="{{ url_for('track_stats_page') }}">{{ _('Track Stats') }}</a>
+    <a class="btn{% if request.endpoint in ('rules_page', 'main.rules_page') %} nav-active{% endif %}" href="{{ url_for('rules_page') }}">{{ _('Rules') }}</a>
+    <a class="btn{% if request.endpoint in ('archive_page', 'main.archive_page') %} nav-active{% endif %}" href="{{ url_for('archive_page') }}">{{ _('Archive') }}</a>
+    <a class="btn{% if request.endpoint in ('admin_players', 'main.admin_players', 'player_profile', 'main.player_profile') %} nav-active{% endif %}" href="{{ url_for('admin_players') }}">{{ _('Players') }}</a>
     </nav>
     <div class="drawer-section">
       <strong>{{ _('Online players:') }}</strong>

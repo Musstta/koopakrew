@@ -196,7 +196,8 @@
 
 <script>
 (function () {
-  var isDark = document.body.dataset.theme === "dark";
+  var _themeMode = localStorage.getItem("theme-mode") || "auto";
+  var isDark = _themeMode === "dark" || (_themeMode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   var scores = {{ attributes.scores | tojson }};
   var compareScores = {{ compare_attributes.scores | tojson if compare_attributes else "null" }};
   var compareLabel = {{ compare_label | tojson if compare_label else "null" }};
@@ -210,31 +211,33 @@
     {{ _("Clutch") | tojson }},
   ];
 
-  var gridColor  = isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.10)";
-  var tickColor  = isDark ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.50)";
-  var labelColor = isDark ? "#d8e2ff" : "#1f2a3d";
+  var gridColor  = isDark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.10)";
+  var tickColor  = isDark ? "#c4cfe8"                : "rgba(0,0,0,0.50)";
+  var labelColor = isDark ? "#ffffff"                : "#1f2a3d";
 
   var datasets = [{
     label: playerName,
     data: [scores.aggression, scores.defense, scores.dominance, scores.consistency, scores.clutch],
-    backgroundColor: isDark ? "rgba(159,130,255,0.22)" : "rgba(108,90,186,0.18)",
-    borderColor:     isDark ? "rgba(159,130,255,0.8)"  : "rgba(108,90,186,0.85)",
-    borderWidth: 2,
-    pointBackgroundColor: isDark ? "#bf9fff" : "#6c5aba",
-    pointRadius: 4,
-    pointHoverRadius: 6,
+    backgroundColor: isDark ? "rgba(139,92,246,0.42)"  : "rgba(108,90,186,0.18)",
+    borderColor:     isDark ? "#a78bfa"                : "rgba(108,90,186,0.85)",
+    borderWidth: 3,
+    pointBackgroundColor: isDark ? "#c4b5fd" : "#6c5aba",
+    pointBorderColor:     isDark ? "#7c3aed" : "#6c5aba",
+    pointRadius: 5,
+    pointHoverRadius: 7,
   }];
 
   if (compareScores) {
     datasets.push({
       label: compareLabel,
       data: [compareScores.aggression, compareScores.defense, compareScores.dominance, compareScores.consistency, compareScores.clutch],
-      backgroundColor: isDark ? "rgba(32,200,160,0.18)" : "rgba(20,160,120,0.15)",
-      borderColor:     isDark ? "rgba(32,200,160,0.8)"  : "rgba(20,160,120,0.85)",
-      borderWidth: 2,
-      pointBackgroundColor: isDark ? "#20c8a0" : "#14a078",
-      pointRadius: 4,
-      pointHoverRadius: 6,
+      backgroundColor: isDark ? "rgba(52,211,153,0.28)"  : "rgba(20,160,120,0.15)",
+      borderColor:     isDark ? "#34d399"                : "rgba(20,160,120,0.85)",
+      borderWidth: 3,
+      pointBackgroundColor: isDark ? "#6ee7b7" : "#14a078",
+      pointBorderColor:     isDark ? "#059669" : "#14a078",
+      pointRadius: 5,
+      pointHoverRadius: 7,
     });
   }
 
@@ -257,7 +260,7 @@
           },
           grid:        { color: gridColor },
           angleLines:  { color: gridColor },
-          pointLabels: { color: labelColor, font: { size: 12, weight: "600" } },
+          pointLabels: { color: labelColor, font: { size: 13, weight: "700" } },
         },
       },
       plugins: {
