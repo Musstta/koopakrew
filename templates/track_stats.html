@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% block body %}
+
+<h2>{{ _("Track Stats") }}</h2>
+
+<div class="stats-hero">
+  <div class="stats-hero-top">
+    <div>
+      <p class="section-kicker">{{ _("Season overview") }}</p>
+    </div>
+    <div class="stats-hero-actions">
+      <form method="get" class="compact-form">
+        <label>
+          {{ _("Season") }}
+          <select name="season">
+            {% for option in season_options %}
+              <option value="{{ option.id }}" {% if option.id == selected_season %}selected{% endif %}>
+                {{ option.label }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        {% if selected_track_id %}
+          <input type="hidden" name="track_id" value="{{ selected_track_id }}">
+        {% endif %}
+        <button class="btn" type="submit">{{ _("Update") }}</button>
+      </form>
+      <form method="get" class="compact-form track-filter">
+        <label>{{ _("Owner filter") }}</label>
+        <div class="inline-inputs">
+          <select name="owner">
+            <option value="">{{ _("All") }}</option>
+            {% for p in owner_options %}
+              <option value="{{ p.id }}" {% if owner_filter and owner_filter == p.id %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <select name="state">
+            <option value="any" {% if state_filter == 'any' %}selected{% endif %}>{{ _("Any") }}</option>
+            <option value="1" {% if state_filter == '1' %}selected{% endif %}>{{ _("Locked") }}</option>
+            <option value="0" {% if state_filter == '0' %}selected{% endif %}>{{ _("Default") }}</option>
+            <option value="-1" {% if state_filter == '-1' %}selected{% endif %}>{{ _("At risk") }}</option>
+          </select>
+          <input type="hidden" name="season" value="{{ selected_season }}">
+          {% if selected_track_id %}<input type="hidden" name="track_id" value="{{ selected_track_id }}">{% endif %}
+          <button class="btn" type="submit">{{ _("Apply") }}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% if most_defended or most_contested or track_activity %}
+  <div class="hero-quick-row">
+    {% if track_activity %}
+      {% set ta = track_activity[0] %}
+      <div class="hero-quick-stat">
+        <span class="hqs-icon">🏁</span>
+        <span class="hqs-value">{% if current_lang == 'es' %}{{ ta.track_es }}{% else %}{{ ta.track_en }}{% endif %}</span>
+        <span class="hqs-label">{{ _("Most raced") }} · {{ _('{count} races').format(count=ta.races) }}</span>
+      </div>
+    {% endif %}
+    {% if most_defended %}
+      <div class="hero-quick-stat">
+        <span class="hqs-icon">🛡️</span>
+        <span class="hqs-value">{% if current_lang == 'es' %}{{ most_defended.track_es }}{% else %}{{ most_defended.track_en }}{% endif %}</span>
+        <span class="hqs-label">{{ _("Most defended") }} · {{ _('{count} defenses').format(count=most_defended.defenses) }}</span>
+      </div>
+    {% endif %}
+    {% if most_contested %}
+      <div class="hero-quick-stat">
+        <span class="hqs-icon">⚔️</span>
+        <span class="hqs-value">{% if current_lang == 'es' %}{{ most_contested.track_es }}{% else %}{{ most_contested.track_en }}{% endif %}</span>
+        <span class="hqs-label">{{ _("Most contested") }} · {{ _('{count} changes').format(count=most_contested.changes) }}</span>
+      </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<section class="stats-section">
+  <header class="section-header">
+    <div>
+      <p class="section-kicker">{{ _("Track spotlight") }}</p>
+      <h3 class="section-title">{{ _("Dive into any track's history") }}</h3>
+    </div>
+    <form method="get" class="compact-form track-picker">
+      <label for="track_id">{{ _("Choose a track") }}</label>
+      <div class="inline-inputs">
+        <select name="track_id" id="track_id">
+          {% for t in track_selector %}
+            <option value="{{ t.id }}"
+              {% if selected_track and selected_track.id == t.id %}selected{% endif %}>
+              {% if current_lang == 'es' %}
+                {{ t.cup_en }} — {{ t.track_es }}
+              {% else %}
+                {{ t.cup_en }} — {{ t.track_en }}
+              {% endif %}
+            </option>
+          {% endfor %}
+        </select>
+        <input type="hidden" name="season" value="{{ selected_season }}">
+        <button class="btn" type="submit">{{ _("View") }}</button>
+      </div>
+    </form>
+  </header>
+
+  {% if selected_track %}
+    {% if track_art and track_art.image_src %}
+    <div class="track-banner">
+      <img class="banner-bg" src="{{ track_art.image_src }}" alt="">
+      <div class="track-banner-overlay">
+        <div class="track-banner-head">
+          {% if track_art.cup_logo_src %}
+            <img class="track-banner-logo" src="{{ track_art.cup_logo_src }}" alt="">
+          {% endif %}
+          <div class="track-banner-title">
+            <strong>{% if current_lang == 'es' %}{{ selected_track.es }}{% else %}{{ selected_track.en }}{% endif %}</strong>
+            <small>{% if current_lang == 'es' %}{{ selected_track.cup_es }}{% else %}{{ selected_track.cup_en }}{% endif %}</small>
+          </div>
+        </div>
+        <div class="track-banner-pills">
+          <div class="pill neutral">{{ track_summary.state_label }}</div>
+          {% if track_summary.owner %}
+            <div class="pill">{{ _("Owner") }}: <strong>{{ track_summary.owner }}</strong></div>
+          {% endif %}
+          {% if track_summary.threat %}
+            <div class="pill hot">⚠️ {{ track_summary.threat }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="track-meta-grid">
+      <div class="pill neutral">
+        {{ _("State") }}: <strong>{{ track_summary.state_label }}</strong>
+      </div>
+      <div class="pill">
+        {{ _("Current owner") }}: <strong>{{ track_summary.owner or "—" }}</strong>
+      </div>
+      {% if track_summary.threat %}
+        <div class="pill hot">
+          {{ _("Threatened by") }}: <strong>{{ track_summary.threat }}</strong>
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="track-spotlight-grid">
+      <div class="spotlight-card modern">
+        <h4>{{ _("Per-player splits") }}</h4>
+        {% if track_player_stats %}
+          <table class="compact-table">
+            <thead>
+              <tr>
+                <th>{{ _("Player") }}</th>
+                <th>{{ _("Wins") }}</th>
+                <th>{{ _("Defenses") }}</th>
+                <th>{{ _("Times taken") }}</th>
+                <th>{{ _("Times lost") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in track_player_stats %}
+                <tr>
+                  <td><strong>{{ s.name }}</strong></td>
+                  <td class="num">{{ s.wins }}</td>
+                  <td class="num">{{ s.defenses }}</td>
+                  <td class="num">{{ s.takes }}</td>
+                  <td class="num">{{ s.losses }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% set track_master = track_player_stats[0] if track_player_stats else None %}
+          {% if track_master %}
+            <div class="mini-badge">{{ _("Track master") }}: <strong>{{ track_master.name }}</strong> ({{ _('{count} wins').format(count=track_master.wins) }})</div>
+          {% endif %}
+        {% else %}
+          <p class="muted">{{ _("No races have been recorded on this track yet.") }}</p>
+        {% endif %}
+      </div>
+
+      <div class="spotlight-card modern">
+        <h4>{{ _("Event history") }}</h4>
+        {% if track_events %}
+          <ul class="event-list">
+            {% for e in track_events %}
+              <li>
+                <div>
+                  <strong>{{ e.winner_name or "—" }}</strong>
+                  <small>{{ e.occurred_at | localdt }}</small>
+                </div>
+                <p class="muted">{{ _("Before:") }} {{ e.pre_owner_name or "-" }} &rarr; {{ _("After:") }} {{ e.post_owner_name or "-" }}</p>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">{{ _("No events yet for this track.") }}</p>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="quick-picks-grid slim">
+      {% if track_quick_picks %}
+        {% for pick in track_quick_picks %}
+          <div class="spotlight-card modern quick-pick-card {% if pick.image_src %}has-art{% endif %}">
+            {% if pick.image_src %}
+              <img class="quick-pick-art" src="{{ pick.image_src }}" alt="">
+              <div class="quick-pick-body">
+                <div class="quick-pick-head">
+                  {% if pick.cup_logo_src %}
+                    <img class="cup-logo-sm" src="{{ pick.cup_logo_src }}" alt="">
+                  {% else %}
+                    {% if pick.label == 'most_defended' %}
+                      <span class="highlight-icon hi-defense">🛡️</span>
+                    {% elif pick.label == 'most_contested' %}
+                      <span class="highlight-icon hi-contested">⚔️</span>
+                    {% else %}
+                      <span class="highlight-icon hi-activity">🏁</span>
+                    {% endif %}
+                  {% endif %}
+                  <strong>{% if current_lang == 'es' %}{{ pick.track_es }}{% else %}{{ pick.track_en }}{% endif %}</strong>
+                </div>
+                <small class="muted">{% if current_lang == 'es' %}{{ pick.cup_es }}{% else %}{{ pick.cup_en }}{% endif %}</small>
+                {% if pick.defenses %}<span class="pill shield small">{{ _('{count} defenses').format(count=pick.defenses) }}</span>{% endif %}
+                {% if pick.changes %}<span class="pill subtle small">{{ _('{count} ownership changes').format(count=pick.changes) }}</span>{% endif %}
+                {% if pick.races %}<span class="pill subtle small">{{ _('{count} races').format(count=pick.races) }}</span>{% endif %}
+                <a class="btn ghost" href="{{ url_for('track_stats_page', season=selected_season, track_id=pick.id) }}">{{ _("Open spotlight") }}</a>
+              </div>
+            {% else %}
+              {% if pick.label == 'most_defended' %}
+                <span class="highlight-icon hi-defense">🛡️</span>
+              {% elif pick.label == 'most_contested' %}
+                <span class="highlight-icon hi-contested">⚔️</span>
+              {% else %}
+                <span class="highlight-icon hi-activity">🏁</span>
+              {% endif %}
+              <strong>{% if current_lang == 'es' %}{{ pick.track_es }}{% else %}{{ pick.track_en }}{% endif %}</strong>
+              <small class="muted">{% if current_lang == 'es' %}{{ pick.cup_es }}{% else %}{{ pick.cup_en }}{% endif %}</small>
+              {% if pick.defenses %}<span class="pill shield small">{{ _('{count} defenses').format(count=pick.defenses) }}</span>{% endif %}
+              {% if pick.changes %}<span class="pill subtle small">{{ _('{count} ownership changes').format(count=pick.changes) }}</span>{% endif %}
+              {% if pick.races %}<span class="pill subtle small">{{ _('{count} races').format(count=pick.races) }}</span>{% endif %}
+              <a class="btn ghost" href="{{ url_for('track_stats_page', season=selected_season, track_id=pick.id) }}">{{ _("Open spotlight") }}</a>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="muted">{{ _("Pick a season to see track highlights.") }}</p>
+      {% endif %}
+    </div>
+  {% endif %}
+</section>
+
+<section class="stats-section">
+  <div class="track-bottom-grid">
+    <div class="spotlight-card modern">
+      <h3 class="section-title" style="margin-bottom:14px">{{ _("Track highlights") }}</h3>
+      <div class="highlight-grid" style="grid-template-columns:1fr">
+        {% if most_defended %}
+          <div class="highlight-item">
+            <span class="highlight-icon hi-defense">🛡️</span>
+            <div>
+              <strong>{{ _("Most defended track") }}</strong>
+              <small>
+                {% if current_lang == 'es' %}
+                  {{ most_defended.track_es }} &mdash; {{ most_defended.cup_es }}
+                {% else %}
+                  {{ most_defended.track_en }} &mdash; {{ most_defended.cup_en }}
+                {% endif %}
+                &mdash; {{ _('{count} successful defenses').format(count=most_defended.defenses) }}
+              </small>
+            </div>
+          </div>
+        {% endif %}
+        {% if most_contested %}
+          <div class="highlight-item">
+            <span class="highlight-icon hi-contested">⚔️</span>
+            <div>
+              <strong>{{ _("Most contested track") }}</strong>
+              <small>
+                {% if current_lang == 'es' %}
+                  {{ most_contested.track_es }} &mdash; {{ most_contested.cup_es }}
+                {% else %}
+                  {{ most_contested.track_en }} &mdash; {{ most_contested.cup_en }}
+                {% endif %}
+                &mdash; {{ _('{count} ownership changes').format(count=most_contested.changes) }}
+              </small>
+            </div>
+          </div>
+        {% endif %}
+        {% if track_activity %}
+          {% set top_activity = track_activity[0] %}
+          <div class="highlight-item">
+            <span class="highlight-icon hi-activity">🏁</span>
+            <div>
+              <strong>{{ _("Top active track") }}</strong>
+              <small>
+                {% if current_lang == 'es' %}
+                  {{ top_activity.track_es }} &mdash; {{ top_activity.cup_es }}
+                {% else %}
+                  {{ top_activity.track_en }} &mdash; {{ top_activity.cup_en }}
+                {% endif %}
+                &mdash; {{ _('{count} races').format(count=top_activity.races) }}
+              </small>
+            </div>
+          </div>
+        {% endif %}
+        {% if not most_defended and not most_contested and not track_activity %}
+          <p class="muted">{{ _("No highlights yet.") }}</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="spotlight-card modern">
+      <h3 class="section-title" style="margin-bottom:14px">{{ _("Most active tracks (by races)") }}</h3>
+      {% if track_activity %}
+        {% set max_ns = namespace(val=1) %}
+        {% for t in track_activity %}
+          {% if t.races > max_ns.val %}{% set max_ns.val = t.races %}{% endif %}
+        {% endfor %}
+        <div class="track-activity-grid stacked">
+          {% for t in track_activity %}
+            {% set pct = ((t.races / max_ns.val) * 100) | int %}
+            <div class="activity-chip">
+              {% if t.cup_logo_src %}
+                <img class="cup-logo-tiny" src="{{ t.cup_logo_src }}" alt="">
+              {% endif %}
+              <div style="flex:1;min-width:0">
+                {% if current_lang == 'es' %}
+                  <strong>{{ t.track_es }}</strong> <small>{{ t.track_en }}</small>
+                {% else %}
+                  <strong>{{ t.track_en }}</strong> <small>{{ t.track_es }}</small>
+                {% endif %}
+                <div class="activity-bar"><span style="width:{{ pct }}%"></span></div>
+                <div class="muted" style="font-size:0.82em">
+                  {% if current_lang == 'es' %}{{ t.cup_es }}{% else %}{{ t.cup_en }}{% endif %}
+                </div>
+              </div>
+              <span class="pill neutral small" style="flex-shrink:0">{{ _('{count} races').format(count=t.races) }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">{{ _("No races recorded yet this season.") }}</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% endblock %}

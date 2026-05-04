@@ -10,12 +10,18 @@ from threading import Thread
 from unittest.mock import patch
 from uuid import uuid4
 
-from flask import template_rendered, g
+from flask import g, template_rendered
 
 import app
 import db_init
+from koopakrew.config import TestingConfig
+from koopakrew.services.core import METRIC_DEFS
 
 PLAYERS = ["Salim", "Sergio", "Fabian", "Sebas"]
+
+
+def presence_service():
+    return app.app.extensions["presence"]
 
 
 def _insert_players(db):
@@ -57,7 +63,12 @@ def seed_template_season(db):
             ),
         )
     db.commit()
-    return {"players": players, "season_id": season_id, "cup_id": cup_id, "track_count": len(track_codes)}
+    return {
+        "players": players,
+        "season_id": season_id,
+        "cup_id": cup_id,
+        "track_count": len(track_codes),
+    }
 
 
 def seed_active_environment(db):
@@ -122,8 +133,8 @@ class AppTestCase(unittest.TestCase):
 
     def bootstrap(self, seed_fn):
         db_path = self.tmp_path / f"koopakrew_{uuid4().hex}.db"
-        app.DB_PATH = str(db_path)
-        app.app.config["TESTING"] = True
+        app.app.config.from_object(TestingConfig)
+        app.app.config["DATABASE_PATH"] = str(db_path)
         with app.app.app_context():
             db = app.get_db()
             db_init.create_schema(db)
@@ -205,8 +216,25 @@ class AppModuleTests(AppTestCase):
         body = resp.get_data(as_text=True)
         self.assertIn("Bravo Course", body)
         self.assertNotIn("Alpha Course", body)
-        self.assertIn('value="Salim" selected', body)
+        self.assertIn('value="Salim" checked', body)
         self.assertIn('value="Salim"', body)
+
+    def test_standings_multiple_owner_filter(self):
+        client, ctx, _ = self.bootstrap(seed_active_environment)
+        with app.app.app_context():
+            db = app.get_db()
+            db.execute(
+                "UPDATE tracks SET owner_id = ? WHERE id = ?",
+                (ctx["players"]["Sergio"], ctx["tracks"]["blank"]),
+            )
+            db.commit()
+        resp = client.get("/?owner=Salim&owner=Sergio")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_data(as_text=True)
+        self.assertIn("Bravo Course", body)
+        self.assertIn("Alpha Course", body)
+        self.assertIn('value="Salim" checked', body)
+        self.assertIn('value="Sergio" checked', body)
 
     def test_apply_result_and_undo(self):
         _, ctx, _ = self.bootstrap(seed_active_environment)
@@ -218,12 +246,16 @@ class AppModuleTests(AppTestCase):
             app.apply_result(db, season_id, track_id, salim_id)
             row = db.execute("SELECT owner_id FROM tracks WHERE id = ?", (track_id,)).fetchone()
             self.assertEqual(row["owner_id"], salim_id)
-            event_count = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            event_count = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)
+            ).fetchone()["n"]
             self.assertEqual(event_count, 1)
             app.undo_last_event(db)
             row = db.execute("SELECT owner_id FROM tracks WHERE id = ?", (track_id,)).fetchone()
             self.assertIsNone(row["owner_id"])
-            event_count_after = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            event_count_after = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)
+            ).fetchone()["n"]
             self.assertEqual(event_count_after, 0)
 
     def test_track_state_full_lifecycle(self):
@@ -278,7 +310,6 @@ class AppModuleTests(AppTestCase):
 
     def test_state_machine_at_risk_theft(self):
         _, ctx, _ = self.bootstrap(seed_active_environment)
-        salim_id = ctx["players"]["Salim"]
         sergio_id = ctx["players"]["Sergio"]
         fabian_id = ctx["players"]["Fabian"]
         season_id = ctx["season_id"]
@@ -345,7 +376,7 @@ class AppModuleTests(AppTestCase):
             self.assertGreaterEqual(sergio_stats["tracks_taken"], 1)
             self.assertGreaterEqual(salim_stats["locks_applied"], 1)
             self.assertTrue(context["track_insights_enabled"])
-            self.assertEqual(len(context["metric_rows"]), len(app.METRIC_DEFS))
+            self.assertEqual(len(context["metric_rows"]), len(METRIC_DEFS))
             self.assertEqual(len(context["player_spotlights"]), len(context["player_stats"]))
             self.assertIn("hot_hand", context["streak_badges"])
             metric_ids = {row["id"] for row in context["metric_rows"]}
@@ -406,6 +437,7 @@ class AppModuleTests(AppTestCase):
             self.assertIsNotNone(salim_card["most_attacked_track"])
             self.assertIsNotNone(salim_card["most_defended_track"])
             self.assertIsNotNone(salim_card["favorite_cup"])
+
     def test_stats_page_filters_inactive_only_for_current(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
@@ -493,9 +525,9 @@ class AppModuleTests(AppTestCase):
         self.assertIn("Koopa Kid", resp.get_data(as_text=True))
         with app.app.app_context():
             db = app.get_db()
-            new_id = db.execute(
-                "SELECT id FROM players WHERE name = ?", ("Koopa Kid",)
-            ).fetchone()["id"]
+            new_id = db.execute("SELECT id FROM players WHERE name = ?", ("Koopa Kid",)).fetchone()[
+                "id"
+            ]
         resp = client.post(
             "/admin/players",
             data={"action": "toggle", "player_id": new_id},
@@ -506,9 +538,9 @@ class AppModuleTests(AppTestCase):
         self.assertIn("Inactive", resp.get_data(as_text=True))
         with app.app.app_context():
             db = app.get_db()
-            active = db.execute(
-                "SELECT active FROM players WHERE id = ?", (new_id,)
-            ).fetchone()["active"]
+            active = db.execute("SELECT active FROM players WHERE id = ?", (new_id,)).fetchone()[
+                "active"
+            ]
             self.assertEqual(active, 0)
 
     def test_set_default_player_and_quick_update(self):
@@ -547,6 +579,36 @@ class AppModuleTests(AppTestCase):
         body = resp.get_data(as_text=True)
         self.assertIn("Season 1", body)
         self.assertIn("Archive", body)
+
+    def test_archive_includes_ended_seasons_from_db(self):
+        client, ctx, _ = self.bootstrap(seed_template_season)
+        season_id = ctx["season_id"]
+        with app.app.app_context():
+            db = app.get_db()
+            entries = app.build_archive_entries(db)
+            labels = [e.get("label") for e in entries]
+            self.assertIn("Season 1 — Archive", labels)
+        resp = client.get("/archive")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_data(as_text=True)
+        self.assertIn("Season 1 — Archive", body)
+
+    def test_stats_page_accepts_ended_season(self):
+        client, ctx, _ = self.bootstrap(seed_template_season)
+        season_id = ctx["season_id"]
+        resp = client.get(f"/stats?season={season_id}")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_data(as_text=True)
+        self.assertIn("Season 1 — Archive", body)
+
+    def test_track_stats_page_loads(self):
+        client, ctx, _ = self.bootstrap(seed_template_season)
+        season_id = ctx["season_id"]
+        resp = client.get(f"/track-stats?season={season_id}")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_data(as_text=True)
+        self.assertIn("Track Stats", body)
+        self.assertIn("Season 1 — Archive", body)
 
     def test_undo_player_deactivation_restores_tracks(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
@@ -587,7 +649,7 @@ class AppModuleTests(AppTestCase):
     def test_presence_ping_tracks_online_players(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         with client.session_transaction() as sess:
             sess["default_player_id"] = salim_id
         resp = client.post("/presence/ping")
@@ -602,39 +664,39 @@ class AppModuleTests(AppTestCase):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
         sergio_id = ctx["players"]["Sergio"]
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         with client.session_transaction() as sess:
             sess["default_player_id"] = salim_id
         client.post("/presence/ping")
-        self.assertTrue(app.ONLINE_PINGS)
+        self.assertTrue(presence_service().online_players())
         resp = client.post(
             "/admin/players/set-default",
             data={"player_id": sergio_id},
             follow_redirects=True,
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(app.ONLINE_PINGS)
+        self.assertFalse(presence_service().online_players())
         with client.session_transaction() as sess:
             self.assertEqual(sess.get("default_player_id"), sergio_id)
 
     def test_clearing_default_player_disconnects_presence(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         with client.session_transaction() as sess:
             sess["default_player_id"] = salim_id
         client.post("/presence/ping")
-        self.assertTrue(app.ONLINE_PINGS)
+        self.assertTrue(presence_service().online_players())
         resp = client.post("/admin/players/clear-default", follow_redirects=True)
         self.assertEqual(resp.status_code, 200)
-        self.assertFalse(app.ONLINE_PINGS)
+        self.assertFalse(presence_service().online_players())
         with client.session_transaction() as sess:
             self.assertIsNone(sess.get("default_player_id"))
 
     def test_presence_ping_drops_token_when_default_inactive(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         with client.session_transaction() as sess:
             sess["default_player_id"] = salim_id
         first_resp = client.post("/presence/ping")
@@ -645,33 +707,34 @@ class AppModuleTests(AppTestCase):
             db.commit()
         second_resp = client.post("/presence/ping")
         self.assertEqual(second_resp.get_json()["status"], "ignored")
-        self.assertFalse(app.ONLINE_PINGS)
+        self.assertFalse(presence_service().online_players())
 
     def test_presence_ping_without_default_clears_token(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
         salim_id = ctx["players"]["Salim"]
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         ghost_token = "ghost"
-        app.ONLINE_PINGS[ghost_token] = {"player_id": salim_id, "last_seen": 0}
+        presence_service()._pings[ghost_token] = {"player_id": salim_id, "last_seen": 0}
         with client.session_transaction() as sess:
             sess["presence_token"] = ghost_token
         resp = client.post("/presence/ping")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["status"], "ignored")
-        self.assertFalse(app.ONLINE_PINGS)
+        self.assertFalse(presence_service().online_players())
         with client.session_transaction() as sess:
             self.assertNotIn("presence_token", sess)
 
     def test_online_presence_status_windows(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         salim = ctx["players"]["Salim"]
         sergio = ctx["players"]["Sergio"]
         fabian = ctx["players"]["Fabian"]
         base_time = 1_000_000.0
-        app.ONLINE_PINGS["fresh"] = {"player_id": salim, "last_seen": base_time - 30}
-        app.ONLINE_PINGS["warming"] = {"player_id": sergio, "last_seen": base_time - 150}
-        app.ONLINE_PINGS["cooling"] = {"player_id": fabian, "last_seen": base_time - 260}
+        store = presence_service()._pings
+        store["fresh"] = {"player_id": salim, "last_seen": base_time - 30}
+        store["warming"] = {"player_id": sergio, "last_seen": base_time - 150}
+        store["cooling"] = {"player_id": fabian, "last_seen": base_time - 260}
         with app.app.app_context():
             db = app.get_db()
             with patch("app.time.time", return_value=base_time):
@@ -681,13 +744,14 @@ class AppModuleTests(AppTestCase):
 
     def test_online_presence_deduplicates_players(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         salim = ctx["players"]["Salim"]
         sergio = ctx["players"]["Sergio"]
         base_time = 2_000_000.0
-        app.ONLINE_PINGS["one"] = {"player_id": salim, "last_seen": base_time - 10}
-        app.ONLINE_PINGS["two"] = {"player_id": salim, "last_seen": base_time - 40}
-        app.ONLINE_PINGS["three"] = {"player_id": sergio, "last_seen": base_time - 20}
+        store = presence_service()._pings
+        store["one"] = {"player_id": salim, "last_seen": base_time - 10}
+        store["two"] = {"player_id": salim, "last_seen": base_time - 40}
+        store["three"] = {"player_id": sergio, "last_seen": base_time - 20}
         with app.app.app_context():
             db = app.get_db()
             with patch("app.time.time", return_value=base_time):
@@ -697,10 +761,10 @@ class AppModuleTests(AppTestCase):
 
     def test_online_presence_purges_stale_tokens(self):
         client, ctx, _ = self.bootstrap(seed_active_environment)
-        app.ONLINE_PINGS.clear()
+        presence_service()._pings.clear()
         salim = ctx["players"]["Salim"]
         stale_time = 100.0
-        app.ONLINE_PINGS["old"] = {"player_id": salim, "last_seen": stale_time}
+        presence_service()._pings["old"] = {"player_id": salim, "last_seen": stale_time}
         with app.app.app_context():
             db = app.get_db()
             with patch("app.time.time", return_value=stale_time + app.ONLINE_TIMEOUT_SECONDS + 10):
@@ -755,7 +819,14 @@ class AppModuleTests(AppTestCase):
                     (code, cup_id, en, es, order_in_cup, owner_id, state, threatened_by_id, season)
                 VALUES (?, ?, ?, ?, ?, NULL, 0, NULL, ?)
                 """,
-                (f"TC{other_season}", other_cup_id, "Temporal Track", "Pista Temporal", 1, other_season),
+                (
+                    f"TC{other_season}",
+                    other_cup_id,
+                    "Temporal Track",
+                    "Pista Temporal",
+                    1,
+                    other_season,
+                ),
             ).lastrowid
             db.execute(
                 """
@@ -790,10 +861,7 @@ class AppModuleTests(AppTestCase):
             db = app.get_db()
             cup_id, tracks = self._create_test_cup(db, season_id, salim_id, sergio_id)
             app.apply_result(db, season_id, tracks[3], salim_id)
-            states = [
-                self._track_snapshot(db, tid)
-                for tid in tracks
-            ]
+            states = [self._track_snapshot(db, tid) for tid in tracks]
             for snap in states:
                 self.assertEqual(snap["state"], 1)
                 self.assertIsNone(snap["threatened_by_id"])
@@ -851,7 +919,9 @@ class AppModuleTests(AppTestCase):
             app.apply_result(db, season_id, tracks[3], sergio_id)
             after_events = db.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
             self.assertEqual(after_events, before_events + 1)
-            sweeps = db.execute("SELECT COUNT(*) AS n FROM events WHERE is_sweep = 1").fetchone()["n"]
+            sweeps = db.execute("SELECT COUNT(*) AS n FROM events WHERE is_sweep = 1").fetchone()[
+                "n"
+            ]
             self.assertEqual(sweeps, 0)
             snap = self._track_snapshot(db, tracks[3])
             self.assertEqual(snap["owner_id"], sergio_id)
@@ -875,7 +945,9 @@ class AppModuleTests(AppTestCase):
             for winner in winners:
                 snapshots.append(self._track_snapshot(db, track_id))
                 app.apply_result(db, season_id, track_id, winner)
-            total_events = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            total_events = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)
+            ).fetchone()["n"]
             self.assertEqual(total_events, len(winners))
             while snapshots:
                 expected = snapshots.pop()
@@ -885,7 +957,9 @@ class AppModuleTests(AppTestCase):
                     (snap["owner_id"], snap["state"], snap["threatened_by_id"]),
                     (expected["owner_id"], expected["state"], expected["threatened_by_id"]),
                 )
-            remaining = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            remaining = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)
+            ).fetchone()["n"]
             self.assertEqual(remaining, 0)
 
     def test_concurrent_race_submissions_documented(self):
@@ -974,7 +1048,6 @@ class AppModuleTests(AppTestCase):
 
     def test_undo_handles_malformed_side_effects(self):
         _, ctx, _ = self.bootstrap(seed_active_environment)
-        season_id = ctx["season_id"]
         track_id = ctx["tracks"]["blank"]
         with app.app.app_context():
             db = app.get_db()
@@ -992,7 +1065,9 @@ class AppModuleTests(AppTestCase):
             db.commit()
             result = app.undo_last_event(db)
             self.assertTrue(result)
-            remaining = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            remaining = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)
+            ).fetchone()["n"]
             self.assertEqual(remaining, 0)
 
     def test_race_submission_with_inactive_player_rejected(self):
@@ -1013,7 +1088,9 @@ class AppModuleTests(AppTestCase):
             db = app.get_db()
             snapshot = self._track_snapshot(db, track_id)
             self.assertIsNone(snapshot["owner_id"])
-            count = db.execute("SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)).fetchone()["n"]
+            count = db.execute(
+                "SELECT COUNT(*) AS n FROM events WHERE track_id = ?", (track_id,)
+            ).fetchone()["n"]
             self.assertEqual(count, 0)
 
     def test_deactivate_player_bulk_tracks(self):
@@ -1043,7 +1120,9 @@ class AppModuleTests(AppTestCase):
             ).fetchone()["n"]
             self.assertEqual(remaining, 0)
             payload = json.loads(
-                db.execute("SELECT side_effects_json FROM events ORDER BY id DESC LIMIT 1").fetchone()["side_effects_json"]
+                db.execute(
+                    "SELECT side_effects_json FROM events ORDER BY id DESC LIMIT 1"
+                ).fetchone()["side_effects_json"]
             )
             self.assertEqual(len(payload["tracks"]), before_owned)
             app.undo_last_event(db)
@@ -1104,7 +1183,9 @@ class AppModuleTests(AppTestCase):
                 self.assertIsNone(row["threatened_by_id"])
             originals = {
                 (r["cup_id"], r["order_in_cup"], r["code"])
-                for r in db.execute("SELECT cup_id, order_in_cup, code FROM tracks WHERE season != ?", (new_id,)).fetchall()
+                for r in db.execute(
+                    "SELECT cup_id, order_in_cup, code FROM tracks WHERE season != ?", (new_id,)
+                ).fetchall()
             }
             for row in tracks:
                 self.assertIn((row["cup_id"], row["order_in_cup"], row["code"]), originals)
@@ -1191,7 +1272,7 @@ class AppModuleTests(AppTestCase):
         original_exists = app.os.path.exists
 
         def fake_exists(path):
-            if path.endswith("MK8TracksSeason1.csv"):
+            if path.endswith("season1_tracks.csv"):
                 return False
             return original_exists(path)
 

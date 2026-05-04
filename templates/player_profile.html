@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block body %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+
+{# ── Player navigation chips ── #}
+<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
+  {% for p in all_players %}
+    {% if p.id == player_id %}
+      <span class="pill small" style="font-weight:700;opacity:1">{{ p.name }}</span>
+    {% else %}
+      <a href="{{ url_for('player_profile', player_id=p.id) }}?season={{ selected_season }}"
+         class="pill small" style="text-decoration:none;opacity:0.75">{{ p.name }}</a>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+  <h2 style="margin:0">{{ player_name }}</h2>
+  <form method="get" style="display:flex;align-items:center;gap:6px">
+    {% if compare_player_id %}<input type="hidden" name="compare" value="{{ compare_player_id }}">{% endif %}
+    {% if compare_season_id %}<input type="hidden" name="compare_season" value="{{ compare_season_id }}">{% endif %}
+    <select name="season" style="font-size:0.85em;padding:3px 6px;border-radius:6px;border:1px solid var(--card-border)">
+      {% for opt in season_options %}
+        <option value="{{ opt.id }}" {% if opt.id == selected_season %}selected{% endif %}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit" style="font-size:0.8em;padding:4px 10px">{{ _("Update") }}</button>
+  </form>
+</div>
+<p class="section-kicker" style="margin-top:2px;margin-bottom:18px">{{ season_label }}</p>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;align-items:start">
+
+  {# ── Pentagon radar chart ── #}
+  <div class="stats-section" style="padding:20px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <h3 class="section-title" style="margin:0">{{ _("Attributes") }}</h3>
+      {% if compare_label %}
+        <span style="font-size:0.8em;opacity:0.7">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(108,90,186,0.85);margin-right:4px"></span>{{ player_name }}
+          &nbsp;
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(32,178,140,0.85);margin-right:4px"></span>{{ compare_label }}
+        </span>
+      {% endif %}
+    </div>
+    <div style="position:relative;max-width:320px;margin:0 auto">
+      <canvas id="profileRadar" width="320" height="320"></canvas>
+    </div>
+
+    {# Score breakdown pills #}
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;justify-content:center">
+      {% set attr_labels = [
+          ("aggression",  "⚔️",  _("Aggression")),
+          ("defense",     "🛡️",  _("Defense")),
+          ("dominance",   "🏰",  _("Dominance")),
+          ("consistency", "📈",  _("Consistency")),
+          ("clutch",      "🎯",  _("Clutch")),
+      ] %}
+      {% for key, icon, label in attr_labels %}
+        {% set score = attributes.scores[key]|round(0)|int %}
+        {% set cmp_score = compare_attributes.scores[key]|round(0)|int if compare_attributes else none %}
+        <span class="pill small" title="{{ label }}">
+          {{ icon }} {{ label }} <strong style="margin-left:4px">{{ score }}</strong>
+          {% if cmp_score is not none %}
+            <span style="opacity:0.6;font-size:0.85em;margin-left:3px">/ {{ cmp_score }}</span>
+          {% endif %}
+        </span>
+      {% endfor %}
+    </div>
+
+    {# ── Compare controls ── #}
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--card-border)">
+      <form method="get" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <input type="hidden" name="season" value="{{ selected_season }}">
+        <select name="compare" style="font-size:0.8em;padding:3px 6px;border-radius:6px;border:1px solid var(--card-border);flex:1;min-width:100px"
+                onchange="this.form.querySelector('[name=compare_season]').value=''">
+          <option value="">— {{ _("vs. player") }} —</option>
+          {% for p in all_players if p.id != player_id %}
+            <option value="{{ p.id }}" {% if compare_player_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="compare_season" style="font-size:0.8em;padding:3px 6px;border-radius:6px;border:1px solid var(--card-border);flex:1;min-width:100px"
+                onchange="this.form.querySelector('[name=compare]').value=''">
+          <option value="">— {{ _("vs. season") }} —</option>
+          {% for opt in season_options if opt.id != selected_season %}
+            <option value="{{ opt.id }}" {% if compare_season_id == opt.id|int %}selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn" type="submit" style="font-size:0.8em;padding:4px 10px">{{ _("Compare") }}</button>
+        {% if compare_label %}
+          <a href="{{ url_for('player_profile', player_id=player_id) }}?season={{ selected_season }}"
+             class="btn" style="font-size:0.8em;padding:4px 10px;text-decoration:none">✕</a>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+
+  {# ── Profile text + session notes ── #}
+  <div style="display:flex;flex-direction:column;gap:14px">
+
+    <div class="stats-section" style="padding:16px">
+      <h3 class="section-title" style="margin-bottom:8px">{{ _("Profile") }}</h3>
+      {% if ai_profile.historical_paragraph %}
+        <p style="margin:0;line-height:1.6;font-size:0.97em">{{ ai_profile.historical_paragraph }}</p>
+      {% else %}
+        <p style="margin:0;font-size:0.9em;opacity:0.55;font-style:italic">✨ {{ _("Generating profile — check back in a moment.") }}</p>
+      {% endif %}
+    </div>
+
+    {% if ai_profile.session_notes %}
+      <div class="stats-section" style="padding:16px">
+        <h3 class="section-title" style="margin-bottom:8px">{{ _("Latest session") }}</h3>
+        <p style="margin:0;line-height:1.6;font-size:0.95em;font-style:italic">{{ ai_profile.session_notes }}</p>
+      </div>
+    {% endif %}
+
+    {# ── Trend pills ── #}
+    <div class="stats-section" style="padding:16px">
+      <h3 class="section-title" style="margin-bottom:10px">{{ _("Trends") }}</h3>
+      <div class="stats-pill-row">
+
+        {# Momentum pill — 0-10 scale, whole number #}
+        {% set mom = attributes.trend.momentum %}
+        {% set mom_total = attributes.trend.momentum_total %}
+        {% if mom_total > 0 %}
+          {% if mom >= 6.0 %}
+            <span class="pill hot" title="{{ _('Win ratio over last {n} events').format(n=mom_total) }}">
+              🔥 {{ _("Momentum") }} &ndash; {{ mom|round(0)|int }}
+            </span>
+          {% elif mom <= 3.5 %}
+            <span class="pill" style="background:rgba(214,112,132,0.12);border-color:rgba(214,112,132,0.3);color:#7c1d2e" title="{{ _('Win ratio over last {n} events').format(n=mom_total) }}">
+              📉 {{ _("Momentum") }} &ndash; {{ mom|round(0)|int }}
+            </span>
+          {% else %}
+            <span class="pill neutral" title="{{ _('Win ratio over last {n} events').format(n=mom_total) }}">
+              📊 {{ _("Momentum") }} &ndash; {{ mom|round(0)|int }}
+            </span>
+          {% endif %}
+        {% else %}
+          <span class="pill subtle">📊 {{ _("Momentum") }} &ndash; {{ _("no data") }}</span>
+        {% endif %}
+
+        {# Presence pill — 0-100, event-based #}
+        {% set pres = attributes.trend.presence|round(0)|int %}
+        {% set pres_player = attributes.trend.presence_player_events %}
+        {% set pres_total = attributes.trend.presence_total_events %}
+        {% if pres_total > 0 %}
+          {% if pres >= 75 %}
+            <span class="pill shield" title="{{ _('{p}/{t} events').format(p=pres_player, t=pres_total) }}">
+              🟢 {{ _("Presence") }} &ndash; {{ pres }}
+            </span>
+          {% elif pres <= 40 %}
+            <span class="pill subtle" title="{{ _('{p}/{t} events').format(p=pres_player, t=pres_total) }}">
+              🔴 {{ _("Presence") }} &ndash; {{ pres }}
+            </span>
+          {% else %}
+            <span class="pill neutral" title="{{ _('{p}/{t} events').format(p=pres_player, t=pres_total) }}">
+              🟡 {{ _("Presence") }} &ndash; {{ pres }}
+            </span>
+          {% endif %}
+        {% else %}
+          <span class="pill subtle">🟡 {{ _("Presence") }} &ndash; {{ _("no data") }}</span>
+        {% endif %}
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{# ── Key stats strip ── #}
+<div class="stats-section" style="margin-top:18px;padding:16px">
+  <h3 class="section-title" style="margin-bottom:12px">{{ _("Season stats") }}</h3>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
+
+    {% macro stat_cell(icon, value, label) %}
+    <div style="display:flex;flex-direction:column;align-items:center;padding:8px 4px;border-radius:10px;background:var(--card-bg);border:1px solid var(--card-border);text-align:center">
+      <span style="font-size:1.4em;line-height:1">{{ icon }}</span>
+      <strong style="font-size:1.15em;margin-top:4px">{{ value }}</strong>
+      <small style="font-size:0.76em;opacity:0.7;margin-top:2px">{{ label }}</small>
+    </div>
+    {% endmacro %}
+
+    {{ stat_cell("🏆", player_stats.wins|default(0), _("Wins")) }}
+    {{ stat_cell("📊", (player_stats.win_rate or 0)|round(1)|string ~ "%", _("Win rate")) }}
+    {{ stat_cell("🏁", player_stats.tracks_owned|default(0), _("Tracks owned")) }}
+    {{ stat_cell("🔒", player_stats.locked_tracks|default(0), _("Locked")) }}
+    {{ stat_cell("🎯", player_stats.tracks_taken|default(0), _("Taken")) }}
+    {{ stat_cell("🛡️", player_stats.defense_successes|default(0), _("Defenses")) }}
+    {{ stat_cell("⚡", player_stats.steals_from_risk|default(0), _("Risk steals")) }}
+    {{ stat_cell("🏅", player_stats.best_win_streak|default(0), _("Best streak")) }}
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var isDark = document.body.dataset.theme === "dark";
+  var scores = {{ attributes.scores | tojson }};
+  var compareScores = {{ compare_attributes.scores | tojson if compare_attributes else "null" }};
+  var compareLabel = {{ compare_label | tojson if compare_label else "null" }};
+  var playerName = {{ player_name | tojson }};
+
+  var labels = [
+    {{ _("Aggression") | tojson }},
+    {{ _("Defense") | tojson }},
+    {{ _("Dominance") | tojson }},
+    {{ _("Consistency") | tojson }},
+    {{ _("Clutch") | tojson }},
+  ];
+
+  var gridColor  = isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.10)";
+  var tickColor  = isDark ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.50)";
+  var labelColor = isDark ? "#d8e2ff" : "#1f2a3d";
+
+  var datasets = [{
+    label: playerName,
+    data: [scores.aggression, scores.defense, scores.dominance, scores.consistency, scores.clutch],
+    backgroundColor: isDark ? "rgba(159,130,255,0.22)" : "rgba(108,90,186,0.18)",
+    borderColor:     isDark ? "rgba(159,130,255,0.8)"  : "rgba(108,90,186,0.85)",
+    borderWidth: 2,
+    pointBackgroundColor: isDark ? "#bf9fff" : "#6c5aba",
+    pointRadius: 4,
+    pointHoverRadius: 6,
+  }];
+
+  if (compareScores) {
+    datasets.push({
+      label: compareLabel,
+      data: [compareScores.aggression, compareScores.defense, compareScores.dominance, compareScores.consistency, compareScores.clutch],
+      backgroundColor: isDark ? "rgba(32,200,160,0.18)" : "rgba(20,160,120,0.15)",
+      borderColor:     isDark ? "rgba(32,200,160,0.8)"  : "rgba(20,160,120,0.85)",
+      borderWidth: 2,
+      pointBackgroundColor: isDark ? "#20c8a0" : "#14a078",
+      pointRadius: 4,
+      pointHoverRadius: 6,
+    });
+  }
+
+  var ctx = document.getElementById("profileRadar").getContext("2d");
+  new Chart(ctx, {
+    type: "radar",
+    data: { labels: labels, datasets: datasets },
+    options: {
+      responsive: false,
+      animation: { duration: 500 },
+      scales: {
+        r: {
+          min: 0,
+          max: 100,
+          ticks: {
+            stepSize: 25,
+            color: tickColor,
+            backdropColor: "transparent",
+            font: { size: 10 },
+          },
+          grid:        { color: gridColor },
+          angleLines:  { color: gridColor },
+          pointLabels: { color: labelColor, font: { size: 12, weight: "600" } },
+        },
+      },
+      plugins: {
+        legend: {
+          display: compareScores !== null,
+          labels: { color: labelColor, font: { size: 11 }, boxWidth: 12 },
+        },
+      },
+    },
+  });
+
+})();
+</script>
+
+{% endblock %}

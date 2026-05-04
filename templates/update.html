@@ -74,7 +74,7 @@
   <ul>
     {% for ev in recent_events %}
       <li class="event-detail">
-        {{ ev['occurred_at'] }} —
+        {{ ev['occurred_at'] | localdt }} —
         {{ _("Winner:") }} {{ ev['winner_name'] or "—" }}.
         {{ _("Before:") }} {{ ev['pre_owner_name'] or "—" }}
         {% if ev['pre_state'] == 1 %}({{ _("Locked") }}){% elif ev['pre_state'] == -1 %}({{ _("At risk") }}){% elif ev['pre_state'] == 0 %}({{ _("Default") }}){% endif %};

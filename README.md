@@ -35,6 +35,13 @@ Koopa Krew is the scorekeeper for our ongoing Mario Kart 8 championship. It pres
 - **Season selector** on the Stats page supports both per-season analysis and all-time aggregation (track insights are disabled in all-season mode to prevent confusion).
 - **Seasonal branding** swaps the hero logo for patriotic/spooky/holiday art automatically.
 
+## Project Layout
+- `koopakrew/` — Flask blueprints, config, and services (the actual app code).
+- `app.py` / `run.py` — Dev and production entry points (use `run.py` for Gunicorn).
+- `scripts/` — Helper utilities like the asset checker and DB seeder.
+- `instance/` — Ignored runtime folder where SQLite files live (dev uses `instance/dev.sqlite`).
+- `archive/` — Long-term storage for legacy files such as `archive/snapshots/season1_tracks.csv` and the retired `archive/legacy-data/koopakrew.db`.
+
 ## Tests & Reliability
 We maintain a growing suite of unit tests in `tests/test_app.py` which cover:
 - Season bootstrap and standings filters.
@@ -46,6 +53,54 @@ We maintain a growing suite of unit tests in `tests/test_app.py` which cover:
 Run the suite with:
 ```bash
 .venv/bin/python -m unittest tests.test_app
+```
+
+## Running Locally
+Development settings live in `.env.development`. The factory loads that file automatically when `KOOPAKREW_CONFIG=development`, so you can keep secrets there without touching production values. The dev database is created at `instance/dev.sqlite`, separate from any production data and the legacy archives.
+
+1. Create a virtualenv and install dependencies (for example `python -m venv .venv && .venv/bin/pip install -r requirements.txt`).
+2. Copy or edit `.env.development` if you need custom overrides (tz, secret, etc.).
+3. For a private dev server run `./run.sh` (binds to `127.0.0.1:5001`, seeds `instance/dev.sqlite`, and reloads on changes). For a production-style preview run `./serve-prod.sh` (binds to `0.0.0.0:5000`, uses `instance/koopakrew.sqlite`, and matches what `kart.musstta.cc` will expose through your Cloudflare tunnel).
+
+### Code Quality & Hooks
+- Format and lint with `black .` and `ruff check .` (configured via `pyproject.toml`).
+- Install the pre-commit hooks once per clone: `pip install pre-commit && pre-commit install`. They’ll run Black and Ruff before each commit.
+
+## Deploying
+Production runs with a different SQLite file (`instance/koopakrew.sqlite`) and requires a real secret key. Use `.env.production.example` as a template:
+
+1. Copy it to `.env.production`, set `KOOPAKREW_SECRET`, and adjust timezone/DB filename if needed.
+2. Point your WSGI server at `run.py` (e.g., `gunicorn run:app -b 127.0.0.1:5000`). The helper builds an app using `ProductionConfig`, so debug-only extras stay disabled. When testing locally you can also run `./serve-prod.sh` which wraps the same entry point.
+3. Keep the instance folder writable so the production database and config can live alongside the code.
+
+### Local dev → prod workflow
+- **Code safely** with `./run.sh`: port `5001`, dev config, `instance/dev.sqlite`, host `127.0.0.1` (not exposed—even if the tunnel is running, it forwards port `5000` so your work stays private).
+- **Review as prod** with `./serve-prod.sh`: port `5000`, production config, `instance/koopakrew.sqlite`. Start your Cloudflare tunnel only when you want to share `kart.musstta.cc`.
+- **Commit & merge**: work on a feature branch, `git add/commit`, push, and open a PR against `main`. After merge, pull on the machine that backs the tunnel and restart the prod process (Gunicorn/systemd) so port `5000` serves the latest code.
+- **Clean shutdowns**: stop whichever script you’re not using so only one binds to a port at a time. Dev and prod databases stay isolated, so you can experiment freely without touching production data.
+
+## Module Map & Diagram
+- `app.py` wires HTTP routes, renders templates, and coordinates services.
+- `koopakrew/services/core.py` encapsulates state-machine logic, stats, and undo handling.
+- `koopakrew/infra/presence.py` tracks online players via session tokens.
+- `koopakrew/blueprints/main.py` registers Flask routes while keeping legacy entry points alive.
+- `koopakrew/config.py` holds environment-specific settings and defaults.
+
+```
+             +------------------+
+             |   HTTP Layer     |
+             | (Blueprints)     |
+             +--------+---------+
+                      |
+                      v
++---------+   +---------------+   +--------------------+
+| Templates|<-| app.py helpers |-> | Services (core.py) |
++---------+   +-------+-------+   +----+---------------+
+                      |                |
+                      v                v
+               +------+-------+   +-----------+
+               |Presence/Infra|   | SQLite DB |
+               +--------------+   +-----------+
 ```
 
 ## Want to Explore?

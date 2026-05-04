@@ -21,6 +21,7 @@ htmlcov/
 # Local data and runtime artifacts
 koopakrew.db
 *.db
+instance/*.sqlite
 tmp/
 MK8Tracks*.csv
 

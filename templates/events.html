@@ -82,7 +82,7 @@
   </form>
 </div>
 
-<p style="font-size:0.9em;color:#555;margin-top:-4px;">
+<p class="event-meta">
   {{ _("Showing {count} events for {label}.").format(count=events|length, label=season_label) }}
 </p>
 
@@ -93,7 +93,7 @@
     {% for e in events %}
       <div class="event-card">
         <div class="event-header">
-          {{ e.occurred_at }}
+          {{ e.occurred_at | localdt }}
           {% if e.is_sweep %}
             • <span style="color:#c62828;font-weight:600;">{{ _('SWEEP') }}</span>
           {% endif %}

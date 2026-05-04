@@ -30,10 +30,14 @@ else
 fi
 
 # ---- Environment knobs (safe defaults) --------------------------------------
-export KOOPAKREW_DB="${KOOPAKREW_DB:-koopakrew.db}"
+DEFAULT_DB_PATH="instance/dev.sqlite"
+export KOOPAKREW_DB="${KOOPAKREW_DB:-$DEFAULT_DB_PATH}"
+export KOOPAKREW_DB_FILENAME="${KOOPAKREW_DB_FILENAME:-$(basename "$KOOPAKREW_DB")}"
 export KOOPAKREW_S2_CSV="${KOOPAKREW_S2_CSV:-MK8TracksS2.csv}"
 export KOOPAKREW_TZ="${KOOPAKREW_TZ:-America/Costa_Rica}"
 export KOOPAKREW_SECRET="${KOOPAKREW_SECRET:-change-me-in-prod}"
+export KOOPAKREW_CONFIG="${KOOPAKREW_CONFIG:-development}"
+export KOOPAKREW_PORT="${KOOPAKREW_PORT:-5001}"
 
 # Season 2 (2025 Q4) seed metadata
 export KOOPAKREW_SEASON_LABEL="${KOOPAKREW_SEASON_LABEL:-Season 2 — 2025 Q4}"
@@ -62,5 +66,5 @@ else
 fi
 
 # ---- Run the app ------------------------------------------------------------
-echo "Starting Koopa Krew app..."
-exec "$VENV_PY" app.py
+echo "Starting Koopa Krew dev server on port ${KOOPAKREW_PORT}..."
+exec env FLASK_APP=app.py FLASK_ENV=development "$VENV_PY" -m flask run --host=127.0.0.1 --port="${KOOPAKREW_PORT}"

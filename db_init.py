@@ -1,8 +1,11 @@
-import os
 import csv
-import sqlite3
+import os
+from pathlib import Path
 
-DB_PATH = os.environ.get("KOOPAKREW_DB", "koopakrew.db")
+from koopakrew.db import connect_database
+
+DEFAULT_DB_PATH = Path("instance") / "dev.sqlite"
+DB_PATH = Path(os.environ.get("KOOPAKREW_DB", DEFAULT_DB_PATH))
 LOCAL_TZ = os.environ.get("KOOPAKREW_TZ", "America/Costa_Rica")
 CSV_PATH = os.environ.get("KOOPAKREW_S2_CSV", "MK8TracksS2.csv")
 
@@ -12,17 +15,20 @@ SEASON_ID = int(os.environ.get("KOOPAKREW_SEASON_ID", "2"))
 SEASON_START = os.environ.get("KOOPAKREW_SEASON_START", "2025-10-01")
 SEASON_END_EXCLUSIVE = os.environ.get("KOOPAKREW_SEASON_END", "2026-01-01")
 
-PLAYERS = [name.strip() for name in os.environ.get("KOOPAKREW_PLAYERS", "Salim,Sergio,Fabian,Sebas").split(",")]
+PLAYERS = [
+    name.strip()
+    for name in os.environ.get("KOOPAKREW_PLAYERS", "Salim,Sergio,Fabian,Sebas").split(",")
+]
 
 
 def get_db():
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    return db
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return connect_database(DB_PATH)
 
 
 def create_schema(db):
-    db.executescript("""
+    db.executescript(
+        """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS players (
@@ -43,7 +49,8 @@ CREATE TABLE IF NOT EXISTS cups (
   code TEXT NOT NULL UNIQUE,
   en   TEXT NOT NULL,
   es   TEXT NOT NULL,
-  [order] INTEGER NOT NULL      -- <— quoted because 'order' is a keyword
+  [order] INTEGER NOT NULL,     -- quoted because 'order' is a keyword
+  is_dlc INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tracks (
@@ -99,8 +106,79 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_time     ON events(occurred_at);
 CREATE INDEX IF NOT EXISTS idx_events_is_sweep ON events(is_sweep);
-""")
+"""
+    )
 
+
+def run_migrations(db):
+    """Apply schema migrations for existing databases. Safe to call on every startup."""
+    # player_profiles: per-player (no season_id) — migrate old per-season table if needed
+    pp_cols = {row[1] for row in db.execute("PRAGMA table_info(player_profiles)").fetchall()}
+    if not pp_cols:
+        db.executescript(
+            """
+CREATE TABLE player_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    events_count_at_generation INTEGER NOT NULL DEFAULT 0,
+    regen_threshold INTEGER NOT NULL DEFAULT 10,
+    is_initialized INTEGER NOT NULL DEFAULT 0,
+    historical_paragraph TEXT,
+    session_notes TEXT,
+    generated_at TEXT,
+    UNIQUE(player_id)
+);
+"""
+        )
+    elif "season_id" in pp_cols:
+        # Migrate from per-(player,season) to per-player; keep most-recent row per player.
+        db.executescript(
+            """
+CREATE TABLE player_profiles_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    events_count_at_generation INTEGER NOT NULL DEFAULT 0,
+    regen_threshold INTEGER NOT NULL DEFAULT 10,
+    is_initialized INTEGER NOT NULL DEFAULT 0,
+    historical_paragraph TEXT,
+    session_notes TEXT,
+    generated_at TEXT,
+    UNIQUE(player_id)
+);
+INSERT INTO player_profiles_v2
+    (player_id, events_count_at_generation, regen_threshold, is_initialized,
+     historical_paragraph, session_notes, generated_at)
+SELECT player_id, events_count_at_generation, regen_threshold, is_initialized,
+       historical_paragraph, session_notes, generated_at
+FROM player_profiles
+WHERE id IN (SELECT MAX(id) FROM player_profiles GROUP BY player_id);
+DROP TABLE player_profiles;
+ALTER TABLE player_profiles_v2 RENAME TO player_profiles;
+"""
+        )
+        db.commit()
+
+    cols = {row[1] for row in db.execute("PRAGMA table_info(cups)").fetchall()}
+    if "is_dlc" not in cols:
+        db.execute("ALTER TABLE cups ADD COLUMN is_dlc INTEGER NOT NULL DEFAULT 0")
+        # Set DLC flag for cups whose order is >= the first BCP (Booster Course Pass) cup
+        first_dlc = db.execute(
+            'SELECT "order" FROM cups WHERE en = ?', ("Golden Dash Cup",)
+        ).fetchone()
+        if first_dlc:
+            db.execute('UPDATE cups SET is_dlc = 1 WHERE "order" >= ?', (first_dlc[0],))
+        db.commit()
+
+    # Fix legacy seed that imported the first season with label "Season 2 — 2025 Q4"
+    # (it was Season 2 in the old system but is Season 1 in this system)
+    row = db.execute(
+        "SELECT id FROM season_meta WHERE label = 'Season 2 — 2025 Q4' AND id = 1"
+    ).fetchone()
+    if row:
+        db.execute(
+            "UPDATE season_meta SET label = 'Season 1 — 2025 Q4' WHERE id = 1"
+        )
+        db.commit()
 
 
 def seed_players(db):
@@ -113,18 +191,18 @@ def seed_season_meta(db):
     # Check if this exact season row exists; if not, insert
     row = db.execute(
         "SELECT id FROM season_meta WHERE label = ? AND start_date = ? AND end_date = ?",
-        (SEASON_LABEL, SEASON_START, SEASON_END_EXCLUSIVE)
+        (SEASON_LABEL, SEASON_START, SEASON_END_EXCLUSIVE),
     ).fetchone()
     if not row:
         db.execute(
             "INSERT INTO season_meta (label, start_date, end_date) VALUES (?, ?, ?)",
-            (SEASON_LABEL, SEASON_START, SEASON_END_EXCLUSIVE)
+            (SEASON_LABEL, SEASON_START, SEASON_END_EXCLUSIVE),
         )
         db.commit()
     # Return the id for the row matching the dates
     row = db.execute(
         "SELECT id FROM season_meta WHERE start_date = ? AND end_date = ?",
-        (SEASON_START, SEASON_END_EXCLUSIVE)
+        (SEASON_START, SEASON_END_EXCLUSIVE),
     ).fetchone()
     return row["id"]
 
@@ -136,7 +214,17 @@ def read_csv_rows():
         reader = csv.DictReader(f)
         rows = [r for r in reader]
     # Expected columns:
-    expected = {"track_code","cup_code","cup_en","cup_es","track_en","track_es","owner","state","threat"}
+    expected = {
+        "track_code",
+        "cup_code",
+        "cup_en",
+        "cup_es",
+        "track_en",
+        "track_es",
+        "owner",
+        "state",
+        "threat",
+    }
     missing = expected - set(reader.fieldnames or [])
     if missing:
         raise ValueError(f"CSV missing columns: {sorted(missing)}")
@@ -165,7 +253,7 @@ def seed_cups_tracks(db, season_id):
         es = rep["cup_es"].strip()
         db.execute(
             'INSERT OR IGNORE INTO cups (code, en, es, "order") VALUES (?, ?, ?, ?)',
-            (code, en, es, order)
+            (code, en, es, order),
         )
     db.commit()
 
@@ -196,7 +284,17 @@ def seed_cups_tracks(db, season_id):
 (code, cup_id, en, es, order_in_cup, owner_id, state, threatened_by_id, season)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """,
-            (track_code, cups[cup_code], en, es, order_in_cup, owner_id, state_val, threat_id, season_id)
+            (
+                track_code,
+                cups[cup_code],
+                en,
+                es,
+                order_in_cup,
+                owner_id,
+                state_val,
+                threat_id,
+                season_id,
+            ),
         )
     db.commit()
 

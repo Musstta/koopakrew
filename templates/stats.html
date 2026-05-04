@@ -3,315 +3,302 @@
 
 <h2>{{ _("Season stats") }}</h2>
 
-<form method="get" class="filter-form" style="max-width:480px;margin-bottom:12px;">
-  <label>
-    {{ _("Season") }}
-    <select name="season">
-      {% for option in season_options %}
-        <option value="{{ option.id }}" {% if option.id == selected_season %}selected{% endif %}>
-          {{ option.label }}
-        </option>
-      {% endfor %}
-    </select>
-  </label>
-  {% set current_track_id = selected_track.id if selected_track else selected_track_id %}
-  {% if current_track_id %}
-    <input type="hidden" name="track_id" value="{{ current_track_id }}">
-  {% endif %}
-  {% if selected_sort %}
-    <input type="hidden" name="sort" value="{{ selected_sort }}">
-  {% endif %}
-  <button class="btn" type="submit">{{ _("Update") }}</button>
-</form>
-{% if track_insights_enabled %}
-  <form method="get" action="{{ url_for('stats_page') }}" style="margin-bottom:12px;">
-    <label for="track_id">{{ _("Choose a track:") }}</label>
-    <select name="track_id" id="track_id">
-      {% for t in track_selector %}
-        <option value="{{ t.id }}"
-          {% if selected_track and selected_track.id == t.id %}selected{% endif %}>
-          {% if current_lang == 'es' %}
-            {{ t.cup_es }} — {{ t.track_es }} ({{ t.track_en }})
-          {% else %}
-            {{ t.cup_en }} — {{ t.track_en }} ({{ t.track_es }})
-          {% endif %}
-        </option>
-      {% endfor %}
-    </select>
-    <button class="btn" type="submit" style="margin-left:8px;">{{ _("View") }}</button>
-    {% if selected_sort %}
-      <input type="hidden" name="sort" value="{{ selected_sort }}">
-    {% endif %}
-    {% if selected_season %}
-      <input type="hidden" name="season" value="{{ selected_season }}">
-    {% endif %}
-  </form>
-{% else %}
-  <p class="event-detail">{{ _("Track insights are only available when viewing a single season.") }}</p>
-{% endif %}
-
-<p class="event-detail">{{ _("Click any metric row to sort players by that stat.") }}</p>
-
-{% if track_insights_enabled %}
-  <div class="track-insights-panel">
-    <h3>{{ _("Track insights") }}</h3>
-    {% if selected_track %}
-      <h4>
-        {% if current_lang == 'es' %}
-          {{ selected_track.es }} ({{ selected_track.en }}) —
-          {{ selected_track.cup_es }} ({{ selected_track.cup_en }})
-        {% else %}
-          {{ selected_track.en }} ({{ selected_track.es }}) —
-          {{ selected_track.cup_en }} ({{ selected_track.cup_es }})
-        {% endif %}
-      </h4>
-
-      <h5>{{ _("Per-player on this track") }}</h5>
-      {% if track_player_stats %}
-        <table border="1" cellpadding="4" cellspacing="0">
-          <thead>
-            <tr>
-              <th>{{ _("Player") }}</th>
-              <th>{{ _("Wins") }}</th>
-              <th>{{ _("Defenses") }}</th>
-              <th>{{ _("Times taken") }}</th>
-              <th>{{ _("Times lost") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for s in track_player_stats %}
-              <tr>
-                <td><strong>{{ s.name }}</strong></td>
-                <td style="text-align:right;">{{ s.wins }}</td>
-                <td style="text-align:right;">{{ s.defenses }}</td>
-                <td style="text-align:right;">{{ s.takes }}</td>
-                <td style="text-align:right;">{{ s.losses }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% set track_master = track_player_stats[0] if track_player_stats else None %}
-        {% if track_master %}
-          <p><strong>🏁 {{ _("Track master:") }}</strong> {{ track_master.name }} ({{ _('{count} wins').format(count=track_master.wins) }})</p>
-        {% endif %}
-      {% else %}
-        <p>{{ _("No races have been recorded on this track yet.") }}</p>
-      {% endif %}
-
-      <h5>{{ _("Event history") }}</h5>
-      {% if track_events %}
-        <ul>
-          {% for e in track_events %}
-            <li>
-              {{ e.occurred_at }} —
-              {{ e.winner_name or "—" }} {{ _("won.") }}
-              {{ _("Before:") }} {{ e.pre_owner_name or "—" }} →
-              {{ _("After:") }} {{ e.post_owner_name or "—" }}.
-            </li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <p>{{ _("No events yet for this track.") }}</p>
-      {% endif %}
-    {% else %}
-      <p>{{ _("Pick a track to drill into per-player history.") }}</p>
-    {% endif %}
-  </div>
-{% endif %}
-
-{% set badge_hot = streak_badges.hot_hand if streak_badges else None %}
-{% set badge_def = streak_badges.shield_wall if streak_badges else None %}
-{% if badge_hot or badge_def %}
-  <div class="totals streak-panel">
-    {% if badge_hot %}
-      🔥 <strong>{{ _("Hot hand:") }}</strong> {{ badge_hot.player }} ({{ _('{count} wins').format(count=badge_hot.streak) }})
-    {% endif %}
-    {% if badge_hot and badge_def %}<br>{% endif %}
-    {% if badge_def %}
-      🛡️ <strong>{{ _("Shield wall:") }}</strong> {{ badge_def.player }} ({{ _('{count} defenses').format(count=badge_def.streak) }})
-    {% endif %}
-  </div>
-{% endif %}
-
-<div class="table-scroll">
-  <table class="stats-table">
-    <thead>
-      <tr>
-        <th>{{ _("Metric") }}</th>
-        {% for p in player_stats %}
-          <th>{{ p.name }}</th>
+<div class="stats-hero">
+  <div class="stats-hero-top">
+    <div>
+      <p class="section-kicker">{{ _("Season overview") }}</p>
+      {% set badges_hot = streak_badges.hot_hand if streak_badges else [] %}
+      {% set badges_def = streak_badges.shield_wall if streak_badges else [] %}
+      <div class="stats-pill-row">
+        {% for b in badges_hot %}
+          <span class="pill hot">🔥 {{ b.player }} &ndash; {{ _('{count} wins').format(count=b.streak) }}</span>
         {% endfor %}
-      </tr>
-    </thead>
-    <tbody>
-        {% for metric in metric_rows %}
-          <tr class="metric-group-{{ metric.group }}">
-            {% set track_query_id = selected_track.id if selected_track else selected_track_id %}
-            <td class="metric-name {% if metric.id == selected_sort %}metric-selected{% endif %}">
-            <a class="metric-sort-link {% if metric.id == selected_sort %}active{% endif %}"
-              href="{{ url_for('stats_page', season=selected_season, sort=metric.id, track_id=track_query_id) }}">
-              {{ metric.label }}
-            </a>
-            {% if metric.help %}
-              <button type="button" class="info-tip"></button>
-              <span class="info-text">{{ metric.help }}</span>
-            {% endif %}
-          </td>
-            {% for cell in metric.cells %}
-              {% set highlight = metric.max_highlight is not none and cell.highlight == metric.max_highlight %}
-              <td class="{% if highlight %}top-value{% endif %}" style="text-align:right;">
-                {% if highlight %}👑 {% endif %}
-                {% if metric.type == "value" %}
-                  {{ cell.value }}
-                {% elif metric.type == "pair" %}
-                  {{ cell.num }} / {{ cell.den }}
-                {% elif metric.type == "percent" %}
-                {% if cell.percent is not none %}
-                  {{ "%.1f"|format(cell.percent) }}%
-                {% else %}
-                  —
-                {% endif %}
-              {% else %}
-                —
-              {% endif %}
-            </td>
-          {% endfor %}
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+        {% for b in badges_def %}
+          <span class="pill shield">🛡️ {{ b.player }} &ndash; {{ _('{count} defenses').format(count=b.streak) }}</span>
+        {% endfor %}
+        {% if not badges_hot and not badges_def %}
+          <span class="muted" style="font-size:0.9em">{{ _("No active streaks.") }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="stats-hero-actions">
+      <form method="get" class="compact-form">
+        <label>
+          {{ _("Season") }}
+          <select name="season">
+            {% for option in season_options %}
+              <option value="{{ option.id }}" {% if option.id == selected_season %}selected{% endif %}>
+                {{ option.label }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        {% if selected_sort %}
+          <input type="hidden" name="sort" value="{{ selected_sort }}">
+        {% endif %}
+        <button class="btn" type="submit">{{ _("Update") }}</button>
+      </form>
+    </div>
+  </div>
+  {% if extra_highlights.best_win_rate or extra_highlights.tracks_taken or extra_highlights.defense_rate %}
+  <div class="hero-quick-row">
+    {% if extra_highlights.best_win_rate %}
+    <div class="hero-quick-stat">
+      <span class="hqs-icon">🏆</span>
+      <span class="hqs-value">{{ extra_highlights.best_win_rate.name }}</span>
+      <span class="hqs-label">{{ _("Win rate") }} &middot; {{ "%.0f"|format(extra_highlights.best_win_rate.win_rate) }}%</span>
+    </div>
+    {% endif %}
+    {% if extra_highlights.tracks_taken %}
+    <div class="hero-quick-stat">
+      <span class="hqs-icon">🎯</span>
+      <span class="hqs-value">{{ extra_highlights.tracks_taken.name }}</span>
+      <span class="hqs-label">{{ _("Top stealer") }} &middot; {{ extra_highlights.tracks_taken.count }}</span>
+    </div>
+    {% endif %}
+    {% if extra_highlights.defense_rate %}
+    <div class="hero-quick-stat">
+      <span class="hqs-icon">🔒</span>
+      <span class="hqs-value">{{ extra_highlights.defense_rate.name }}</span>
+      <span class="hqs-label">{{ _("Best defense") }} &middot; {{ "%.0f"|format(extra_highlights.defense_rate.rate) }}%</span>
+    </div>
+    {% endif %}
+    {% if extra_highlights.net_gain %}
+    <div class="hero-quick-stat">
+      <span class="hqs-icon">📈</span>
+      <span class="hqs-value">{{ extra_highlights.net_gain.name }}</span>
+      <span class="hqs-label">{{ _("Net leader") }} &middot; +{{ extra_highlights.net_gain.count }}</span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
-
-<div class="stats-legend">
-  <span class="legend-pill control">{{ _("Track control") }}</span>
-  <span class="legend-pill performance">{{ _("Race performance") }}</span>
-  <span class="legend-pill risk">{{ _("Risk / hunter plays") }}</span>
-  <span class="legend-pill defense">{{ _("Defense") }}</span>
-</div>
-<p class="event-detail">
-  {{ _("Risk rows track who is pushing tracks into ⚠️ status. Hunter marks show how often someone sets a target and later steals it.") }}
-</p>
 
 {% if player_spotlights %}
-  <h3>{{ _("Player spotlights") }}</h3>
-  <div class="player-spotlights">
-    {% for card in player_spotlights %}
-      <div class="spotlight-card">
-        <strong>{{ card.name }}</strong>
-        <ul>
-          <li>🔐 <strong>{{ _("Locks applied:") }}</strong> {{ card.locks_applied }}</li>
-          <li>🎯 <strong>{{ _("Hunter marks:") }}</strong> {{ card.hunter_marks }}</li>
-          {% if card.cups_owned %}
-            <li>
-              🏆 <strong>{{ _("Cups owned:") }}</strong>
-              {% for cup in card.cups_owned %}
+  <section class="stats-section">
+    <header class="section-header">
+      <h3 class="section-title">{{ _("Player Spotlights") }}</h3>
+    </header>
+    <div class="player-spotlights modern-grid">
+      {% for card in player_spotlights %}
+        <div class="spotlight-card modern compact">
+          <div class="spotlight-head">
+            <strong>{{ card.name }}</strong>
+            <a href="{{ url_for('player_profile', player_id=card.id) }}?season={{ selected_season }}" class="pill small" style="text-decoration:none;font-size:0.75em;padding:2px 8px">{{ _("Profile") }} →</a>
+          </div>
+          <div class="spotlight-grid">
+            <span class="spotlight-stat" title="{{ _('Tracks owned') }}">🏁 <strong>{{ card.tracks_owned|default(0, true) }}</strong> <small>{{ _("tracks") }}</small></span>
+            <span class="spotlight-stat" title="{{ _('Locks applied / currently held') }}">🔒 <strong>{{ card.locks_applied|default(0, true) }}</strong> <small>{{ _("locks") }}</small> / <strong>{{ card.locked_tracks|default(0, true) }}</strong> <small>{{ _("held") }}</small></span>
+            <span class="spotlight-stat" title="{{ _('Hunter marks applied / active') }}">🎯 <strong>{{ card.hunter_marks|default(0, true) }}</strong> <small>{{ _("marks") }}</small> / <strong>{{ card.current_mark_targets|default(0, true) }}</strong> <small>{{ _("active") }}</small></span>
+            {% if card.cups_owned %}
+              <span class="spotlight-stat" title="{{ _('Cups owned') }}">🏆 <strong>{{ card.cups_owned|length }}</strong> <small>{{ _("cups") }}</small></span>
+            {% endif %}
+            {% if card.best_track %}
+              <div class="spotlight-line">
+                {% set bt_name = card.best_track.track_es if current_lang == 'es' else card.best_track.track_en %}
+                <strong>{{ bt_name }}</strong> - {{ _('{count} wins').format(count=card.best_track.count) }}
+              </div>
+            {% endif %}
+            {% if card.most_defended_track %}
+              <div class="spotlight-line">
+                {% set md_name = card.most_defended_track.track_es if current_lang == 'es' else card.most_defended_track.track_en %}
+                {{ md_name }} - {{ _('{count} defenses').format(count=card.most_defended_track.count) }}
+              </div>
+            {% endif %}
+            {% if card.most_attacked_track %}
+              <div class="spotlight-line">
+                {% set ma_name = card.most_attacked_track.track_es if current_lang == 'es' else card.most_attacked_track.track_en %}
+                {{ ma_name }} - {{ _('{count} attacks').format(count=card.most_attacked_track.count) }}
+              </div>
+            {% endif %}
+            {% if card.favorite_cup %}
+              <div class="spotlight-line">
                 {% if current_lang == 'es' %}
-                  {{ cup.cup_es }}
+                  {{ card.favorite_cup.cup_es }} - {{ _('{count} wins').format(count=card.favorite_cup.wins) }}
                 {% else %}
-                  {{ cup.cup_en }}
+                  {{ card.favorite_cup.cup_en }} - {{ _('{count} wins').format(count=card.favorite_cup.wins) }}
                 {% endif %}
-                {% if not loop.last %}, {% endif %}
-              {% endfor %}
-            </li>
-          {% endif %}
-          {% if card.best_track %}
-            <li>
-              🏁 <strong>{{ _("Best track:") }}</strong>
-              {% set bt_name = card.best_track.track_es if current_lang == 'es' else card.best_track.track_en %}
-              {{ bt_name }}
-              — {{ _('{count} wins').format(count=card.best_track.count) }}
-            </li>
-          {% endif %}
-          {% if card.most_defended_track %}
-            <li>
-              🛡️ <strong>{{ _("Most defended:") }}</strong>
-              {% set md_name = card.most_defended_track.track_es if current_lang == 'es' else card.most_defended_track.track_en %}
-              {{ md_name }}
-              — {{ _('{count} defenses').format(count=card.most_defended_track.count) }}
-            </li>
-          {% endif %}
-          {% if card.most_attacked_track %}
-            <li>
-              ⚔️ <strong>{{ _("Most attacked:") }}</strong>
-              {% set ma_name = card.most_attacked_track.track_es if current_lang == 'es' else card.most_attacked_track.track_en %}
-              {{ ma_name }}
-              — {{ _('{count} attacks').format(count=card.most_attacked_track.count) }}
-            </li>
-          {% endif %}
-          {% if card.favorite_cup %}
-            <li>
-              🥇 <strong>{{ _("Favorite cup:") }}</strong>
-              {% if current_lang == 'es' %}
-                {{ card.favorite_cup.cup_es }} ({{ card.favorite_cup.cup_en }})
-              {% else %}
-                {{ card.favorite_cup.cup_en }} ({{ card.favorite_cup.cup_es }})
-              {% endif %}
-              — {{ _('{count} wins').format(count=card.favorite_cup.wins) }}
-            </li>
-          {% endif %}
-        </ul>
-      </div>
-    {% endfor %}
-  </div>
-{% endif %}
-
-<h3>{{ _("Highlights") }}</h3>
-<ul>
-  {% if most_defended %}
-    <li>
-      <strong>{{ _("Most defended track:") }}</strong>
-      {% if current_lang == 'es' %}
-        {{ most_defended.track_es }} ({{ most_defended.track_en }}) —
-        {{ most_defended.cup_es }} ({{ most_defended.cup_en }})
-      {% else %}
-        {{ most_defended.track_en }} ({{ most_defended.track_es }}) —
-        {{ most_defended.cup_en }} ({{ most_defended.cup_es }})
-      {% endif %}
-      — {{ _('{count} successful defenses').format(count=most_defended.defenses) }}
-    </li>
-  {% endif %}
-  {% if most_contested %}
-    <li>
-      <strong>{{ _("Most contested track:") }}</strong>
-      {% if current_lang == 'es' %}
-        {{ most_contested.track_es }} ({{ most_contested.track_en }}) —
-        {{ most_contested.cup_es }} ({{ most_contested.cup_en }})
-      {% else %}
-        {{ most_contested.track_en }} ({{ most_contested.track_es }}) —
-        {{ most_contested.cup_en }} ({{ most_contested.cup_es }})
-      {% endif %}
-      — {{ _('{count} ownership changes').format(count=most_contested.changes) }}
-    </li>
-  {% endif %}
-</ul>
-
-<h3>{{ _("Most active tracks (by races)") }}</h3>
-{% if track_activity %}
-  <table border="1" cellpadding="4" cellspacing="0">
-    <thead>
-      <tr>
-        <th>{{ _("Track") }}</th>
-        <th>{{ _("Cup") }}</th>
-        <th>{{ _("Races") }}</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in track_activity %}
-        <tr>
-          {% if current_lang == 'es' %}
-            <td>{{ t.track_es }} ({{ t.track_en }})</td>
-            <td>{{ t.cup_es }} ({{ t.cup_en }})</td>
-          {% else %}
-            <td>{{ t.track_en }} ({{ t.track_es }})</td>
-            <td>{{ t.cup_en }} ({{ t.cup_es }})</td>
-          {% endif %}
-          <td style="text-align:right;">{{ t.races }}</td>
-        </tr>
+              </div>
+            {% endif %}
+          </div>
+        </div>
       {% endfor %}
-    </tbody>
-  </table>
-{% else %}
-  <p>{{ _("No races recorded yet this season.") }}</p>
+    </div>
+  </section>
 {% endif %}
+
+<section class="stats-section">
+  <h3 class="section-title" style="margin-bottom:14px">{{ _("Highlights") }}</h3>
+  <div class="highlight-grid">
+    {% if most_defended %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-defense">🛡️</span>
+        <div>
+          <strong>{{ _("Most defended track") }}</strong>
+          <small>
+            {% if current_lang == 'es' %}
+              {{ most_defended.track_es }} ({{ most_defended.track_en }}) &mdash; {{ most_defended.cup_es }}
+            {% else %}
+              {{ most_defended.track_en }} ({{ most_defended.track_es }}) &mdash; {{ most_defended.cup_en }}
+            {% endif %}
+            &mdash; {{ _('{count} successful defenses').format(count=most_defended.defenses) }}
+          </small>
+        </div>
+      </div>
+    {% endif %}
+    {% if most_contested %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-contested">⚔️</span>
+        <div>
+          <strong>{{ _("Most contested track") }}</strong>
+          <small>
+            {% if current_lang == 'es' %}
+              {{ most_contested.track_es }} ({{ most_contested.track_en }}) &mdash; {{ most_contested.cup_es }}
+            {% else %}
+              {{ most_contested.track_en }} ({{ most_contested.track_es }}) &mdash; {{ most_contested.cup_en }}
+            {% endif %}
+            &mdash; {{ _('{count} ownership changes').format(count=most_contested.changes) }}
+          </small>
+        </div>
+      </div>
+    {% endif %}
+    {% if extra_highlights.best_win_rate %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-winrate">🏆</span>
+        <div>
+          <strong>{{ _("Best win rate") }}</strong>
+          <small>{{ extra_highlights.best_win_rate.name }} &mdash; {{ "%.1f"|format(extra_highlights.best_win_rate.win_rate) }}% ({{ _('{count} races').format(count=extra_highlights.best_win_rate.races) }})</small>
+        </div>
+      </div>
+    {% endif %}
+    {% if extra_highlights.defense_rate %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-defrate">🔐</span>
+        <div>
+          <strong>{{ _("Best defense rate") }}</strong>
+          <small>{{ extra_highlights.defense_rate.name }} &mdash; {{ "%.1f"|format(extra_highlights.defense_rate.rate) }}% ({{ _('{count} defenses attempted').format(count=extra_highlights.defense_rate.races) }})</small>
+        </div>
+      </div>
+    {% endif %}
+    {% if extra_highlights.tracks_taken %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-captures">🎯</span>
+        <div>
+          <strong>{{ _("Tracks taken leader") }}</strong>
+          <small>{{ extra_highlights.tracks_taken.name }} &mdash; {{ _('{count} captures').format(count=extra_highlights.tracks_taken.count) }}</small>
+        </div>
+      </div>
+    {% endif %}
+    {% if extra_highlights.net_gain %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-netgain">📈</span>
+        <div>
+          <strong>{{ _("Best net gain") }}</strong>
+          <small>{{ extra_highlights.net_gain.name }} &mdash; {{ _('{count} net tracks').format(count=extra_highlights.net_gain.count) }}</small>
+        </div>
+      </div>
+    {% endif %}
+    {% if extra_highlights.locks_applied %}
+      <div class="highlight-item">
+        <span class="highlight-icon hi-locks">🔒</span>
+        <div>
+          <strong>{{ _("Most locks applied") }}</strong>
+          <small>{{ extra_highlights.locks_applied.name }} &mdash; {{ _('{count} locks').format(count=extra_highlights.locks_applied.count) }}</small>
+        </div>
+      </div>
+    {% endif %}
+    {% if not most_defended and not most_contested %}
+      <p class="muted">{{ _("No highlights yet.") }}</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="stats-section">
+  <header class="section-header">
+    <h3 class="section-title">{{ _("Player leaderboard") }}</h3>
+  </header>
+
+  <div class="table-shell">
+    <div class="stats-group-tabs">
+      <button class="stats-group-tab active" data-group="all">{{ _("All") }}</button>
+      <button class="stats-group-tab" data-group="control"><span class="tab-dot tab-control"></span>{{ _("Track control") }}</button>
+      <button class="stats-group-tab" data-group="performance"><span class="tab-dot tab-performance"></span>{{ _("Race performance") }}</button>
+      <button class="stats-group-tab" data-group="risk"><span class="tab-dot tab-risk"></span>{{ _("Risk / hunter") }}</button>
+      <button class="stats-group-tab" data-group="defense"><span class="tab-dot tab-defense"></span>{{ _("Defense") }}</button>
+    </div>
+    <div class="table-scroll">
+      <table class="stats-table modern">
+        <thead>
+          <tr>
+            <th>
+              {{ _("Metric") }}
+              <button type="button" class="info-tip"></button>
+              <span class="info-text">{{ _("Click a metric name to sort. 👑 marks the best value per row.") }}</span>
+            </th>
+            {% for p in player_stats %}
+              <th>{{ p.name }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for metric in metric_rows %}
+            <tr class="metric-group-{{ metric.group }}">
+              {% set track_query_id = selected_track.id if selected_track else selected_track_id %}
+              <td class="metric-name {% if metric.id == selected_sort %}metric-selected{% endif %}">
+                <a class="metric-sort-link {% if metric.id == selected_sort %}active{% endif %}"
+                  href="{{ url_for('stats_page', season=selected_season, sort=metric.id, track_id=track_query_id) }}">
+                  {{ metric.label }}
+                </a>
+                {% if metric.help %}
+                  <button type="button" class="info-tip"></button>
+                  <span class="info-text">{{ metric.help }}</span>
+                {% endif %}
+              </td>
+              {% for cell in metric.cells %}
+                {% set highlight = metric.max_highlight is not none and cell.highlight == metric.max_highlight %}
+                <td class="{% if highlight %}top-value{% endif %} num">
+                  {% if highlight %}👑 {% endif %}
+                  {% if metric.type == "value" %}
+                    {{ cell.value }}
+                  {% elif metric.type == "pair" %}
+                    {{ cell.num }} / {{ cell.den }}
+                  {% elif metric.type == "percent" %}
+                    {% if cell.percent is not none %}
+                      {{ "%.1f"|format(cell.percent) }}%
+                    {% else %}
+                      -
+                    {% endif %}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="event-detail" style="margin-top:8px">
+      {{ _("Risk rows track who is pushing tracks into ⚠️ status. Hunter marks show how often someone sets a target and later steals it.") }}
+    </p>
+  </div>
+</section>
+
+<script>
+(function(){
+  const tabs = document.querySelectorAll('.stats-group-tab');
+  const rows = document.querySelectorAll('.stats-table tbody tr');
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(){
+      tabs.forEach(function(t){ t.classList.remove('active'); });
+      tab.classList.add('active');
+      const group = tab.dataset.group;
+      rows.forEach(function(row){
+        row.style.display = (group === 'all' || row.classList.contains('metric-group-' + group)) ? '' : 'none';
+      });
+    });
+  });
+})();
+</script>
 
 {% endblock %}
